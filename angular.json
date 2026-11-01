@@ -15,7 +15,7 @@
       },
       "root": "",
       "sourceRoot": "src",
-      "prefix": "app",
+      "prefix": "wash",
       "architect": {
         "build": {
           "builder": "@angular/build:application",
