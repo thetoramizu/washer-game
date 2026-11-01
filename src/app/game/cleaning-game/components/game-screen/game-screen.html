@@ -9,7 +9,7 @@
 
     <div class="progress-info">
       <span>Propreté</span>
-      <strong>{{ progress | number:'1.0-0' }} %</strong>
+      <strong>{{ progress() | number:'1.0-0' }} %</strong>
     </div>
 
   </header>
@@ -18,7 +18,7 @@
     <div
       class="progress-fill"
       [class.complete]="mapReward() > 0"
-      [style.width.%]="progress"
+      [style.width.%]="progress()"
     ></div>
   </div>
 

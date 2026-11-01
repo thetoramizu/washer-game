@@ -90,14 +90,32 @@ export class DirtEngine {
 
   /**
    * Quantité de salissure (en unités du moteur) correspondant
-   * à 1 $ de récompense accumulée.
+   * à 1 $ de gain accumulé en nettoyant.
    *
    * Cette constante unique règle l'économie du jeu : elle est
    * volontairement élevée pour que les gains restent cohérents
    * avec les prix de la boutique (une centaine de dollars par
    * carte au niveau de base).
    */
-  private static readonly DIRT_UNITS_PER_DOLLAR = 25000;
+  static readonly DIRT_UNITS_PER_DOLLAR = 25000;
+
+  /**
+   * Nombre d'unités de salissure retirées nécessaire pour valoir
+   * 1 $ de récompense de fin de carte.
+   *
+   * La récompense finale est plafonnée par la taille réelle de la
+   * carte et ne dépend donc ni de l'outil utilisé ni des couches
+   * superposées : impossible de « farmer » des sommes énormes avec
+   * un outil surpuissant ou une carte dense.
+   */
+  private static readonly DIRT_UNITS_PER_REWARD_DOLLAR = 100000;
+
+  /**
+   * Récompense maximale versée pour une carte, quel que soit son
+   * nombre de zones de salissure (garde-fou pour les futures très
+   * grandes cartes).
+   */
+  private static readonly MAX_MAP_REWARD = 400;
 
   // Tampon interne et son contexte, utilisés pour le rendu
   // basse résolution puis l'agrandissement sur le canvas.

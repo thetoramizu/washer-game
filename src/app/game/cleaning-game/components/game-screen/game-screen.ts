@@ -3,7 +3,6 @@ import {
   Component,
   ElementRef,
   inject,
-  NgZone,
   OnDestroy,
   signal,
   ViewChild,
@@ -34,12 +33,15 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   // rendue à une résolution plafonnée pour rester fluide.
   private static readonly MAX_CANVAS_WIDTH = 900;
 
+  // Socle de récompense versé même si les gains accumulés pendant
+  // la partie restent modestes (cohérent avec des améliorations à
+  // partir de 100 $).
+  private static readonly MINIMUM_MAP_REWARD = 25;
+
   @ViewChild('gameCanvas')
   canvasRef!: ElementRef<HTMLCanvasElement>;
 
   readonly gamingState = inject(GamingState);
-
-  private readonly ngZone = inject(NgZone);
 
   dirtTypes = DIRT_TYPES;
 
@@ -79,7 +81,14 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   private pointerY = -100;
   private pointerInside = false;
 
-  progress = 0;
+  // Progression du nettoyage, pilotée par un signal : seule la
+  // barre de progression et l'affichage « % » dépendent d'elle.
+  // Sa mise à jour est throttlée (voir THROTTLE) pour éviter de
+  // marquer le change detection plusieurs fois par image.
+  readonly progress = signal(0);
+
+  // Intervalle minimal entre deux mises à jour de la progression.
+  private static readonly PROGRESS_UPDATE_INTERVAL_MS = 150;
 
   /**
    * Le taux affiché est arrondi à l'entier : un joueur qui voit
@@ -88,20 +97,21 @@ export class GameScreen implements AfterViewInit, OnDestroy {
    * éviter la frustration, sans forcer un nettoyage parfait.
    */
   get showFinishHint(): boolean {
-    return this.mapReward() === 0 && this.progress >= 99.5;
+    return this.mapReward() === 0 && this.progress() >= 99.5;
   }
-
-  private lastProgressUpdate = 0;
 
   // Boucle d'animation : rend la scène à chaque image au lieu
   // de tout recalculer à chaque événement du pointeur.
   private rafId = 0;
-  private renderScheduled = false;
-  private frameClock = 0;
+  private running = false;
 
-  // L'écoute du pointeur se fait directement sur le canvas,
-  // hors zone Angular : le rendu (canvas + requestAnimationFrame)
-  // n'a pas besoin du change detection à chaque mouvement.
+  // Horodatage de la dernière mise à jour de la progression
+  // (throttle : le calcul complet est coûteux sur les grandes cartes).
+  private lastProgressUpdate = 0;
+
+  // L'écoute du pointeur se fait directement sur le canvas :
+  // le rendu (canvas + requestAnimationFrame) ne passe donc par
+  // aucun mécanisme de change detection à chaque mouvement.
   private detachPointerListeners?: () => void;
 
   // Gains accumulés pendant la partie en cours.
@@ -112,10 +122,10 @@ export class GameScreen implements AfterViewInit, OnDestroy {
 
   ngAfterViewInit(): void {
 
-    // Toute l'interaction avec le canvas est gérée hors zone
-    // Angular : les mouvements du pointeur et le rendu ne
-    // déclenchent plus de change detection à chaque image.
-    this.ngZone.runOutsideAngular(() => this.setupCanvasInteraction());
+    // Les écouteurs sont posés directement sur le canvas : en
+    // zoneless, ni les mouvements du pointeur ni le rendu ne
+    // déclenchent de change detection.
+    this.setupCanvasInteraction();
 
     // Le canvas n'existe que lorsque cet écran est affiché :
     // la partie peut donc démarrer ici, en tenant compte de
@@ -131,15 +141,14 @@ export class GameScreen implements AfterViewInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.detachPointerListeners?.();
-    cancelAnimationFrame(this.rafId);
+    this.stopRenderLoop();
   }
 
   /**
    * Attache les écouteurs de pointeur directement sur le canvas.
    *
-   * À appeler dans un contexte hors zone : cela évite qu'un
-   * pointermove (très fréquent) ne relance tout le change
-   * detection d'Angular alors que seul le canvas change.
+   * Le pointermove (très fréquent) ne touche que le canvas :
+   * il ne doit donc pas relancer le change detection d'Angular.
    */
   private setupCanvasInteraction(): void {
 
@@ -259,11 +268,15 @@ export class GameScreen implements AfterViewInit, OnDestroy {
     // Réinitialise les gains de la partie.
     this.earnedMoney = 0;
     this.mapReward.set(0);
+    this.progress.set(0);
 
-    // Affichage initial.
+    // Affichage initial, puis boucle de rendu continue :
+    // le canvas n'est dessiné qu'ici, jamais dans les écouteurs.
     this.drawFrame();
 
     this.updateProgress();
+
+    this.startRenderLoop();
   }
 
   // --------------------------------
@@ -320,20 +333,20 @@ export class GameScreen implements AfterViewInit, OnDestroy {
     this.lastCleanTime = 0;
     this.canvas.setPointerCapture(event.pointerId);
     this.updatePointerPosition(event);
+    // Le nettoyage est appliqué immédiatement (réactivité au clic) ;
+    // le dessin, lui, attend la prochaine image de la boucle.
     this.cleanAtPointer();
   }
 
   onPointerMove(event: PointerEvent): void {
     this.updatePointerPosition(event);
 
+    // Seul l'état interne est mis à jour ici : aucun dessin ni
+    // signal dans les écouteurs. La boucle d'animation (RAF)
+    // nettoie et rend à chaque image, au plus une fois par frame.
     if (this.isCleaning) {
-      this.cleanAtPointer();
+      this.applyDirtyDelta();
     }
-
-    // Le rendu est regroupé dans la boucle d'animation :
-    // plusieurs mouvements entre deux images ne coûtent
-    // qu'un seul dessin complet.
-    this.scheduleRender();
   }
 
   onPointerUp(): void {
@@ -345,12 +358,10 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   onPointerEnter(event: PointerEvent): void {
     this.pointerInside = true;
     this.updatePointerPosition(event);
-    this.scheduleRender();
   }
 
   onPointerLeave(): void {
     this.pointerInside = false;
-    this.scheduleRender();
   }
 
   private updatePointerPosition(event: PointerEvent): void {
@@ -372,20 +383,23 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   // --------------------------------
 
   /**
-   * Demande au moteur de nettoyer la position actuelle
-   * avec l'outil équipé et ses améliorations.
+   * Applique le nettoyage accumulé depuis la dernière image.
+   *
+   * Appelé par la boucle d'animation (une fois par frame) et non
+   * par les événements du pointeur : sur un écran haute fréquence,
+   * plusieurs pointermove peuvent survenir entre deux images ; ils
+   * ne coûtent ici qu'une seule opération de nettoyage, avec le
+   * deltaTime réellement écoulé.
    */
-  private cleanAtPointer(): void {
+  private applyDirtyDelta(): void {
 
-    // Récupère les caractéristiques actualisées de l'outil.
     const tool = this.activeTool;
 
     if (!tool || !this.dirtEngine) return;
 
     const now = performance.now();
 
-    // Calcule le temps écoulé depuis le dernier nettoyage.
-    // On limite le delta pour éviter les gros sauts.
+    // Temps écoulé depuis le dernier nettoyage appliqué.
     const deltaTime = this.lastCleanTime === 0
       ? 1 / 60
       : Math.min((now - this.lastCleanTime) / 1000, 0.05);
@@ -411,14 +425,13 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       this.earnedMoney +=
         result.removed * this.dirtEngine.getRewardPerUnit();
     }
+  }
 
-    // Actualisation périodique de la progression.
-    if (now - this.lastProgressUpdate > 150) {
-
-      this.updateProgress();
-
-      this.lastProgressUpdate = now;
-    }
+  /**
+   * Nettoie immédiatement sous le pointeur (pressé de clic).
+   */
+  private cleanAtPointer(): void {
+    this.applyDirtyDelta();
   }
 
   // --------------------------------
@@ -426,25 +439,59 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   // --------------------------------
 
   /**
-   * Planifie un dessin pour la prochaine image.
+   * Démarre la boucle d'animation.
    *
-   * Regrouper les rendus dans requestAnimationFrame évite de
-   * recalculer toute la scène à chaque événement du pointeur
-   * (qui peut se déclencher bien plus souvent que 60 fois/s).
+   * Un seul cycle requestAnimationFrame alimente tout le canvas :
+   * nettoyage en cours, dessin et progression. Les écouteurs du
+   * pointeur ne dessinent jamais eux-mêmes, ce qui garantit une
+   * cadence régulière (~60 images/s) quelle que soit la fréquence
+   * réelle des événements (jusqu'à 240 Hz sur certains écrans).
    */
-  private scheduleRender(): void {
+  private startRenderLoop(): void {
 
-    if (this.renderScheduled) return;
+    if (this.running) return;
 
-    this.renderScheduled = true;
+    this.running = true;
 
-    this.rafId = requestAnimationFrame((time) => {
+    const loop = () => {
 
-      this.renderScheduled = false;
-      this.frameClock = time;
+      if (!this.running) return;
+
+      // Nettoyage continu tant que le pointeur est pressé :
+      // au plus une opération par image.
+      if (this.isCleaning) {
+        this.applyDirtyDelta();
+      }
 
       this.drawFrame();
-    });
+
+      // Progression throttlée : son calcul parcourt toute la
+      // carte, ce qui serait trop coûteux à chaque image sur
+      // les grandes surfaces.
+      const now = performance.now();
+
+      if (now - this.lastProgressUpdate >=
+          GameScreen.PROGRESS_UPDATE_INTERVAL_MS) {
+
+        this.updateProgress();
+
+        this.lastProgressUpdate = now;
+      }
+
+      this.rafId = requestAnimationFrame(loop);
+    };
+
+    this.rafId = requestAnimationFrame(loop);
+  }
+
+  /**
+   * Arrête proprement la boucle d'animation.
+   */
+  private stopRenderLoop(): void {
+
+    this.running = false;
+
+    cancelAnimationFrame(this.rafId);
   }
 
   /**
@@ -511,35 +558,48 @@ export class GameScreen implements AfterViewInit, OnDestroy {
 
   /**
    * Récupère directement la progression calculée par le moteur.
+   *
+   * Appelé depuis la boucle d'animation (hors change detection) :
+   * seul le signal `progress` est mis à jour, et uniquement si la
+   * valeur affichée change — ainsi, en zoneless, le gabarit n'est
+   * rafraîchi qu'autant que nécessaire, pas à chaque image.
    */
   private updateProgress(): void {
 
     if (!this.dirtEngine) return;
 
     const progress = this.dirtEngine.getProgress();
-    const completed = this.dirtEngine.isComplete();
 
-    // La progression est pilotée par un signal : les mises à jour
-    // déclenchées hors zone Angular (boucle de rendu) seront bien
-    // propagées au gabarit.
-    this.ngZone.run(() => {
-
+    // Le pourcentage affiché est arrondi à l'entier : on ignore
+    // les micro-variations invisibles pour éviter des mises à jour
+    // de signal (et donc de vue) inutiles.
+    if (Math.round(progress) !== Math.round(this.progress())) {
       this.progress.set(progress);
+    }
 
-      // La carte est validée dès le seuil de propreté atteint,
-      // ce qui correspond au « 100 % » vu par le joueur.
-      // La récompense n'est versée qu'une seule fois.
-      if (completed && this.mapReward() === 0) {
+    // La carte est validée dès le seuil de propreté atteint. Ce
+    // seuil (COMPLETION_THRESHOLD côté moteur) correspond exactement
+    // au « 100 % » perçu par le joueur grâce à l'arrondi à
+    // l'entier : la récompense tombe donc au moment précis où le
+    // taux affiché passe à 100 %, sans exiger un nettoyage parfait.
+    if (this.dirtEngine.isComplete() && this.mapReward() === 0) {
 
-        const reward = Math.max(
-          25,
-          Math.round(this.earnedMoney)
-        );
+      // Récompense plafonnée par la taille réelle de la carte :
+      // environ 1 $ pour 100 000 unités de salissure retirées
+      // (soit ~85 $ pour la terrasse, ~340 $ pour le sous-sol),
+      // cohérent avec des améliorations à partir de 100 $.
+      const proportionalReward =
+        this.dirtEngine.getInitialAmount() /
+        DirtEngine.DIRT_UNITS_PER_DOLLAR;
 
-        this.mapReward.set(reward);
-        this.gamingState.addMoney(reward);
-      }
-    });
+      const reward = Math.max(
+        GameScreen.MINIMUM_MAP_REWARD,
+        Math.round(proportionalReward)
+      );
+
+      this.mapReward.set(reward);
+      this.gamingState.addMoney(reward);
+    }
   }
 
   // --------------------------------
@@ -556,15 +616,14 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       this.activeMap().dirtDensity
     );
 
-    this.progress = 0;
+    this.progress.set(0);
     this.earnedMoney = 0;
     this.mapReward.set(0);
 
     this.lastCleanTime = 0;
+    this.lastProgressUpdate = performance.now();
 
     this.drawFrame();
-
-    this.updateProgress();
   }
 
   // --------------------------------
@@ -617,10 +676,9 @@ export class GameScreen implements AfterViewInit, OnDestroy {
 
     // Reconstruit le moteur et les Canvas
     // avec les dimensions de la nouvelle carte.
+    // initializeGame() remet aussi la progression à 0 % et
+    // redémarre la boucle d'animation sur la nouvelle échelle.
     this.initializeGame();
-
-    // La nouvelle carte commence à 0 %.
-    this.progress = 0;
   }
 
   goShop(): void {
