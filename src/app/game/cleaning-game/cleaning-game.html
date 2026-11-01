@@ -1,3 +1,22 @@
+    <!-- Sélection de la carte actuellement jouée -->
+<div class="map-selector">
+
+  <label for="map-select">Carte :</label>
+
+  <select
+    id="map-select"
+    [value]="activeMap.id"
+    (change)="selectMap($any($event.target).value)"
+  >
+    @for (map of maps; track map.id) {
+      <option [value]="map.id">
+        {{ map.name }}
+      </option>
+    }
+  </select>
+
+</div>
+
 <div class="game-container">
 
     <header class="game-header">
@@ -38,6 +57,28 @@
             }
 
         </div>
+
+        <!-- Sélection des outils disponibles -->
+<div class="tool-selector">
+
+  @for (tool of tools; track tool.id) {
+
+    <button
+      type="button"
+      [class.active]="activeTool.id === tool.id"
+      (click)="selectTool(tool.id)"
+    >
+      {{ tool.name }}
+
+      <small>
+        Rayon : {{ tool.radius }} px
+      </small>
+
+    </button>
+
+  }
+
+</div>
 
     </div>
 

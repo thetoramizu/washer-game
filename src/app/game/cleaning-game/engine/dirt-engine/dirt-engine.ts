@@ -90,61 +90,145 @@ export class DirtEngine {
   // Génération des salissures
   // --------------------------------
 
-  generate(): void {
+  
+/**
+ * Génère les salissures de la carte.
+ *
+ * Chaque type de salissure possède son propre
+ * nombre de zones à générer.
+ *
+ * Les densités sont fournies par la configuration
+ * de la carte actuellement chargée.
+ */
+generate(
+  dirtDensity: Record<string, number>
+): void {
 
-    const dirtCount = this.dirtTypes.length;
+  // Réinitialise toutes les couches.
+  for (const layer of this.layers) {
+    layer.fill(0);
+  }
 
-    // Réinitialise toutes les quantités.
-    for (const layer of this.layers) {
-      layer.fill(0);
-    }
+  // Génère chaque type de salissure autorisé.
+  for (
+    let dirtIndex = 0;
+    dirtIndex < this.dirtTypes.length;
+    dirtIndex++
+  ) {
 
-    // Génère des zones de salissures indépendantes.
-    for (let dirtIndex = 0; dirtIndex < dirtCount; dirtIndex++) {
+    const dirt = this.dirtTypes[dirtIndex];
+    const layer = this.layers[dirtIndex];
 
-      const layer = this.layers[dirtIndex];
+    // Récupère le nombre de zones configuré pour cette salissure.
+    // Une valeur absente signifie que la salissure est désactivée.
+    const zoneCount = Math.max(
+      0,
+      Math.floor(dirtDensity[dirt.id] ?? 0)
+    );
 
-      for (let i = 0; i < 90; i++) {
+    // Génère les zones indépendantes.
+    for (let i = 0; i < zoneCount; i++) {
 
-        const centerX = Math.random() * this.width;
-        const centerY = Math.random() * this.height;
+      const centerX = Math.random() * this.width;
+      const centerY = Math.random() * this.height;
 
-        const radius = 8 + Math.random() * 35;
+      const radius = 8 + Math.random() * 35;
 
-        const minX = Math.max(0, Math.floor(centerX - radius));
-        const maxX = Math.min(this.width - 1, Math.ceil(centerX + radius));
+      const minX = Math.max(0, Math.floor(centerX - radius));
+      const maxX = Math.min(
+        this.width - 1,
+        Math.ceil(centerX + radius)
+      );
 
-        const minY = Math.max(0, Math.floor(centerY - radius));
-        const maxY = Math.min(this.height - 1, Math.ceil(centerY + radius));
+      const minY = Math.max(0, Math.floor(centerY - radius));
+      const maxY = Math.min(
+        this.height - 1,
+        Math.ceil(centerY + radius)
+      );
 
-        for (let y = minY; y <= maxY; y++) {
+      for (let y = minY; y <= maxY; y++) {
 
-          for (let x = minX; x <= maxX; x++) {
+        for (let x = minX; x <= maxX; x++) {
 
-            const dx = x - centerX;
-            const dy = y - centerY;
+          const dx = x - centerX;
+          const dy = y - centerY;
 
-            const distance = Math.sqrt(dx * dx + dy * dy);
+          const distance = Math.sqrt(dx * dx + dy * dy);
 
-            if (distance <= radius) {
+          if (distance <= radius) {
 
-              const index = y * this.width + x;
+            const index = y * this.width + x;
 
-              // Les salissures peuvent se superposer.
-              layer[index] = 255;
-            }
+            // La zone peut se superposer à une autre.
+            layer[index] = 255;
           }
         }
       }
     }
-
-    // Attribue un ordre aléatoire à chaque pixel.
-    this.generateLayerOrders();
-
-    // Mémorise la quantité réelle de salissures générées.
-    // Cette valeur devient notre référence de progression.
-    this.initialAmount = this.getRemainingAmount();
   }
+
+  // Mélange indépendamment l'ordre des couches de chaque pixel.
+  this.generateLayerOrders();
+
+  // Mémorise la quantité initiale réelle pour la progression.
+  this.initialAmount = this.getRemainingAmount();
+}
+
+  // generate(): void {
+
+  //   const dirtCount = this.dirtTypes.length;
+
+  //   // Réinitialise toutes les quantités.
+  //   for (const layer of this.layers) {
+  //     layer.fill(0);
+  //   }
+
+  //   // Génère des zones de salissures indépendantes.
+  //   for (let dirtIndex = 0; dirtIndex < dirtCount; dirtIndex++) {
+
+  //     const layer = this.layers[dirtIndex];
+
+  //     for (let i = 0; i < 90; i++) {
+
+  //       const centerX = Math.random() * this.width;
+  //       const centerY = Math.random() * this.height;
+
+  //       const radius = 8 + Math.random() * 35;
+
+  //       const minX = Math.max(0, Math.floor(centerX - radius));
+  //       const maxX = Math.min(this.width - 1, Math.ceil(centerX + radius));
+
+  //       const minY = Math.max(0, Math.floor(centerY - radius));
+  //       const maxY = Math.min(this.height - 1, Math.ceil(centerY + radius));
+
+  //       for (let y = minY; y <= maxY; y++) {
+
+  //         for (let x = minX; x <= maxX; x++) {
+
+  //           const dx = x - centerX;
+  //           const dy = y - centerY;
+
+  //           const distance = Math.sqrt(dx * dx + dy * dy);
+
+  //           if (distance <= radius) {
+
+  //             const index = y * this.width + x;
+
+  //             // Les salissures peuvent se superposer.
+  //             layer[index] = 255;
+  //           }
+  //         }
+  //       }
+  //     }
+  //   }
+
+  //   // Attribue un ordre aléatoire à chaque pixel.
+  //   this.generateLayerOrders();
+
+  //   // Mémorise la quantité réelle de salissures générées.
+  //   // Cette valeur devient notre référence de progression.
+  //   this.initialAmount = this.getRemainingAmount();
+  // }
 
   // --------------------------------
   // Ordre des couches par pixel

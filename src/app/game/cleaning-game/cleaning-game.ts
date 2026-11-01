@@ -8,6 +8,8 @@ import {
 import { DIRT_TYPES } from '../models/dirt-types.data';
 import { CLEANING_TOOLS } from '../models/cleaning-tools.data';
 import { DirtEngine } from './engine/dirt-engine/dirt-engine';
+import { GameMap } from '../models/game-map';
+import { GAME_MAPS } from '../models/game-maps.data';
 
 @Component({
   imports: [],
@@ -22,9 +24,23 @@ export class CleaningGame implements AfterViewInit {
 
   dirtTypes = DIRT_TYPES;
 
+  // Catalogue des cartes disponibles.
+  readonly maps = GAME_MAPS;
 
-  private readonly WIDTH = 800;
-  private readonly HEIGHT = 500;
+  // Carte actuellement sélectionnée.
+  activeMap: GameMap = GAME_MAPS[0];
+
+  // Dimensions de la carte actuellement chargée.
+  private get WIDTH(): number {
+    return this.activeMap.width;
+  }
+
+  private get HEIGHT(): number {
+    return this.activeMap.height;
+  }
+
+  // private readonly WIDTH = 800;
+  // private readonly HEIGHT = 500;
 
   private canvas!: HTMLCanvasElement;
   private ctx!: CanvasRenderingContext2D;
@@ -110,15 +126,31 @@ export class CleaningGame implements AfterViewInit {
       this.HEIGHT
     );
 
-    // Création du moteur de salissures.
+    /**
+     * Récupère uniquement les salissures autorisées
+     * sur la carte actuellement sélectionnée.
+     */
+    const mapDirtTypes = this.dirtTypes.filter(
+      dirt => this.activeMap.dirtDensity[dirt.id] !== undefined
+    );
+
+    /**
+     * Crée le moteur avec les dimensions et les salissures
+     * propres à cette carte.
+     */
     this.dirtEngine = new DirtEngine(
       this.WIDTH,
       this.HEIGHT,
-      this.dirtTypes
+      mapDirtTypes
     );
 
-    // Génération des différentes salissures.
-    this.dirtEngine.generate();
+    /**
+     * Génère les salissures selon la densité configurée
+     * dans le catalogue de cartes.
+     */
+    this.dirtEngine.generate(
+      this.activeMap.dirtDensity
+    );
 
     // Affichage initial.
     this.render();
@@ -569,8 +601,10 @@ export class CleaningGame implements AfterViewInit {
  */
   resetGame(): void {
 
-    this.dirtEngine.generate();
-
+    // Régénère la carte avec ses propres paramètres.
+    this.dirtEngine.generate(
+      this.activeMap.dirtDensity
+    );
     this.progress = 0;
 
     this.lastCleanTime = 0;
@@ -589,4 +623,62 @@ export class CleaningGame implements AfterViewInit {
 
   //   this.render();
   // }
+
+
+  /**
+ * Sélectionne un outil parmi ceux disponibles.
+ */
+  selectTool(toolId: string): void {
+
+    const tool = this.tools.find(
+      item => item.id === toolId
+    );
+
+    // Ignore les identifiants inconnus.
+    if (!tool) return;
+
+    this.activeTool = tool;
+
+    // Réinitialise le chronomètre pour éviter
+    // un deltaTime trop important lors du changement.
+    this.lastCleanTime = 0;
+
+    // Actualise le curseur pour afficher le nouveau rayon.
+    this.render();
+  }
+
+  /**
+   * Charge une nouvelle carte à partir de son identifiant.
+   *
+   * L'ancien moteur est remplacé par un nouveau moteur
+   * configuré avec les paramètres de la nouvelle carte.
+   */
+  selectMap(mapId: string): void {
+
+    const selectedMap = this.maps.find(
+      map => map.id === mapId
+    );
+
+    // Ignore les identifiants inconnus.
+    if (!selectedMap) return;
+
+    this.activeMap = selectedMap;
+
+    // Arrête toute opération de nettoyage en cours.
+    this.isCleaning = false;
+    this.lastCleanTime = 0;
+
+    // Réinitialise le pointeur.
+    this.pointerX = -100;
+    this.pointerY = -100;
+    this.pointerInside = false;
+
+    // Reconstruit le moteur et les Canvas
+    // avec les dimensions de la nouvelle carte.
+    this.initializeGame();
+
+    // La nouvelle carte commence à 0 %.
+    this.progress = 0;
+  }
+
 }
