@@ -1,27 +1,35 @@
 
 /**
- * Configuration d'une carte.
+ * Configuration d'une carte du jeu.
  */
 export interface GameMap {
 
-  // Identifiant unique de la carte.
+  // Identifiant unique.
   id: string;
 
-  // Nom affiché dans l'interface.
+  // Nom affiché dans les menus.
   name: string;
 
-  // Dimensions de la carte.
+  // Description de l'environnement.
+  description: string;
+
+  // Dimensions réelles de la carte.
   width: number;
   height: number;
 
-  /**
-   * Densité de chaque type de salissure.
-   *
-   * La valeur représente le nombre de zones
-   * générées pour ce type de salissure.
-   *
-   * Une salissure absente de cet objet
-   * ne sera pas générée sur la carte.
-   */
+  // Niveau de difficulté.
+  difficulty: 'easy' | 'medium' | 'hard';
+
+  // Nombre de zones générées pour chaque salissure.
   dirtDensity: Record<string, number>;
+
+  // Prix de déblocage.
+  // 0 signifie que la carte est gratuite.
+  unlockPrice: number;
+
+  // État de disponibilité initial.
+  unlockedByDefault: boolean;
+
+  // Couleur provisoire de l'illustration.
+  previewColor: string;
 }

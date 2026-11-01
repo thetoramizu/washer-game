@@ -1,79 +1,85 @@
+
 import { CleaningTool } from './cleaning-tool';
 
 /**
  * Catalogue des outils disponibles dans le jeu.
- *
- * Les coefficients d'efficacité sont indépendants
- * de la puissance générale de chaque outil.
  */
 export const CLEANING_TOOLS: CleaningTool[] = [
 
-    // --------------------------------
-    // Éponge basique
-    // --------------------------------
+  {
+    id: 'sponge',
+    name: 'Éponge basique',
 
-    {
-        id: 'sponge',
-        name: 'Éponge basique',
+    description: 'Un outil polyvalent pour les salissures légères.',
 
-        radius: 38,
-        power: 1,
+    radius: 38,
+    power: 1,
+    depthPenalty: 0.30,
 
-        // Chaque couche supplémentaire réduit
-        // l'efficacité de 30 %.
-        depthPenalty: 0.30,
-
-        efficiency: {
-            dust: 1,
-            mud: 0.8,
-            mold: 0.5,
-            moss: 0.1
-        }
+    efficiency: {
+      dust: 1,
+      mud: 0.8,
+      mold: 0.5,
+      moss: 0.1
     },
 
-    // --------------------------------
-    // Brosse professionnelle
-    // --------------------------------
+    price: 0,
 
-    {
-        id: 'brush',
-        name: 'Brosse professionnelle',
+    availableUpgrades: [
+      'radius',
+      'power',
+      'efficiency',
+      'penetration'
+    ]
+  },
 
-        radius: 45,
-        power: 1.5,
+  {
+    id: 'brush',
+    name: 'Brosse professionnelle',
 
-        // La brosse pénètre mieux les couches profondes.
-        depthPenalty: 0.15,
+    description: 'Une brosse spécialisée dans les salissures tenaces.',
 
-        efficiency: {
-            dust: 0.6,
-            mud: 1,
-            mold: 0.8,
-            moss: 2
-        }
+    radius: 45,
+    power: 1.5,
+    depthPenalty: 0.15,
+
+    efficiency: {
+      dust: 0.6,
+      mud: 1,
+      mold: 0.8,
+      moss: 2
     },
 
+    price: 0,
 
- // --------------------------------
-    // DEBUG
-    // --------------------------------
+    availableUpgrades: [
+      'power',
+      'efficiency',
+      'penetration'
+    ]
+  },
 
-    {
-        id: 'overpowered',
-        name: 'Cheat',
+  {
+    id: 'overpowered',
+    name: 'Cheat',
 
-        radius: 145,
-        power: 11.5,
+    description: 'Outil de test extrêmement puissant.',
 
-        // La brosse pénètre mieux les couches profondes.
-        depthPenalty: 0.15,
+    radius: 145,
+    power: 11.5,
+    depthPenalty: 0.15,
 
-        efficiency: {
-            dust: 0.6,
-            mud: 1,
-            mold: 0.8,
-            moss: 2
-        }
-    }
+    efficiency: {
+      dust: 0.6,
+      mud: 1,
+      mold: 0.8,
+      moss: 2
+    },
+
+    price: 0,
+
+    // Outil de debug : aucune amélioration.
+    availableUpgrades: []
+  }
 
 ];

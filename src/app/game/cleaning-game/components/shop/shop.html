@@ -1,0 +1,136 @@
+<main class="shop">
+
+  <header class="page-header">
+
+    <div>
+      <h1>Boutique</h1>
+      <p>Dépense tes gains en outils et en améliorations.</p>
+    </div>
+
+    <div class="money-display">
+      {{ gamingState.money() }} $
+    </div>
+
+  </header>
+
+  <section class="shop-grid">
+
+    @for (tool of gamingState.tools; track tool.id) {
+
+      <article class="tool-card">
+
+        <div class="tool-content">
+
+          <h2>{{ tool.name }}</h2>
+
+          <p class="description">{{ tool.description }}</p>
+
+          <div class="stats">
+
+            <div class="stat">
+              <span>Rayon</span>
+              <strong>{{ tool.radius | number:'1.0-0' }}</strong>
+            </div>
+
+            <div class="stat">
+              <span>Puissance</span>
+              <strong>{{ tool.power | number:'1.0-1' }}</strong>
+            </div>
+
+            <div class="stat">
+              <span>Malus profondeur</span>
+              <strong>{{ tool.depthPenalty * 100 }} %</strong>
+            </div>
+
+          </div>
+
+          <div class="efficiency">
+
+            @for (entry of tool.efficiency | keyvalue; track entry.key) {
+              <span class="efficiency-chip">
+                {{ entry.key }} · {{ entry.value }}
+              </span>
+            }
+
+          </div>
+
+          <!-- Achat de l'outil -->
+          @if (gamingState.ownsTool(tool.id)) {
+
+            <span class="owned-badge">Possédé</span>
+
+            @if (gamingState.equippedToolId() === tool.id) {
+              <span class="equipped-badge">Équipé</span>
+            }
+
+          } @else {
+
+            <button
+              class="buy-button"
+              [disabled]="gamingState.money() < tool.price"
+              (click)="buyTool(tool)"
+            >
+              Acheter · {{ tool.price }} $
+            </button>
+
+          }
+
+          <!-- Améliorations -->
+          @if (tool.availableUpgrades.length > 0) {
+
+            <div class="upgrades">
+
+              <h3>Améliorations</h3>
+
+              @for (row of getUpgradeRows(tool.id); track row.upgrade.id) {
+
+                <div class="upgrade-row">
+
+                  <div class="upgrade-info">
+                    <strong>{{ row.upgrade.name }}</strong>
+                    <small>{{ row.upgrade.description }}</small>
+                    <small>
+                      Niveau {{ row.level }} / {{ row.upgrade.maxLevel }}
+                    </small>
+                  </div>
+
+                  @if (row.maxedOut) {
+
+                    <span class="maxed-badge">Max</span>
+
+                  } @else {
+
+                    <button
+                      class="upgrade-button"
+                      [disabled]="!gamingState.ownsTool(tool.id)
+                                 || gamingState.money() < row.price"
+                      (click)="buyUpgrade(tool.id, row.upgrade.id)"
+                    >
+                      +1 · {{ row.price }} $
+                    </button>
+
+                  }
+
+                </div>
+
+              }
+
+            </div>
+
+          }
+
+        </div>
+
+      </article>
+
+    }
+
+  </section>
+
+  <footer>
+    <button class="back-button" (click)="goBack()">
+      Retour au menu
+    </button>
+  </footer>
+
+</main>

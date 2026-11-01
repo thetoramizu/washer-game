@@ -1,0 +1,37 @@
+
+<main class="main-menu">
+
+  <section class="menu-content">
+
+    <h1>Moldwasher</h1>
+
+    <p class="subtitle">
+      Un petit coup de propre ?
+    </p>
+
+    <nav class="menu-buttons">
+
+      <button
+        class="primary-button"
+        (click)="gameState.navigateTo('map-selection')"
+      >
+        Jouer
+      </button>
+
+      <button
+        class="secondary-button"
+        (click)="gameState.navigateTo('tool-shop')"
+      >
+        Boutique
+      </button>
+
+    </nav>
+
+    <div class="money-display">
+      <span>Portefeuille</span>
+      <strong>{{ gameState.money() }} $</strong>
+    </div>
+
+  </section>
+
+</main>
