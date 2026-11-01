@@ -505,10 +505,17 @@ getRewardPerUnit(): number {
    * plus petite que la carte : le rendu reste fluide même sur
    * les grandes cartes. Le curseur est dessiné par le composant
    * après cet appel, à l'échelle réelle.
+   *
+   * destinationWidth / destinationHeight correspondent à la
+   * taille du canvas (buffer), pas à celle de la carte logique :
+   * sinon l'image serait dessinée à la mauvaise échelle et les
+   * zones nettoyées ne correspondraient plus au curseur.
    */
   render(
     ctx: CanvasRenderingContext2D,
-    baseImage: ImageData
+    baseImage: ImageData,
+    destinationWidth: number,
+    destinationHeight: number
   ): void {
 
     const bufferPixels = this.buffer.data;
@@ -554,14 +561,15 @@ getRewardPerUnit(): number {
     // Envoie le tampon basse résolution sur un canvas intermédiaire…
     this.bufferCtx.putImageData(this.buffer, 0, 0);
 
-    // …puis l'agrandit sur le canvas final (accélération matérielle).
+    // …puis l'agrandit à la taille exacte du canvas final
+    // (accélération matérielle).
     ctx.imageSmoothingEnabled = true;
     ctx.drawImage(
       this.bufferCanvas,
       0,
       0,
-      this.width,
-      this.height
+      destinationWidth,
+      destinationHeight
     );
   }
 

@@ -211,6 +211,9 @@ export class GameScreen implements AfterViewInit, OnDestroy {
 
     const scale = displayWidth / this.WIDTH;
 
+    // Les deux dimensions sont réduites avec le même facteur :
+    // le ratio est conservé, sinon le repérage curseur/zones
+    // serait décalé (étirement vertical ou horizontal).
     this.canvas.width = Math.round(this.WIDTH * scale);
     this.canvas.height = Math.round(this.HEIGHT * scale);
 
@@ -506,10 +509,15 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       return;
     }
 
-    // Le moteur génère l'image finale de la carte.
+    // Le moteur génère l'image finale de la carte, à la taille
+    // exacte du canvas (et non celle de la carte logique) : sans
+    // cela, l'aperçu affiché serait décalé par rapport aux zones
+    // réellement nettoyées sous le curseur.
     this.dirtEngine.render(
       this.ctx,
-      this.cleanImage
+      this.cleanImage,
+      this.canvas.width,
+      this.canvas.height
     );
 
     // Affichage du curseur de nettoyage.
