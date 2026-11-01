@@ -75,21 +75,13 @@ export class DirtEngine {
   static readonly COMPLETION_THRESHOLD = 95;
 
   /**
-   * Buffer de rendu réutilisé à chaque frame.
+   * Buffer de rendu réutilisé pour les recompositions complètes.
    *
-   * Évite d'allouer une nouvelle ImageData complète à chaque appel,
-   * ce qui provoquait des pauses importantes sur les grandes cartes.
+   * Alloué à la première composition totale (les dimensions ne
+   * changent jamais en cours de vie du moteur), il évite de créer
+   * une nouvelle ImageData complète à chaque regeneration.
    */
-  private renderBuffer!: ImageData;
-
-  /**
-   * Copie "sale" du buffer, conservée entre deux frames.
-   *
-   * Si aucune salissure n'a été retirée depuis le dernier rendu,
-   * il suffit de réafficher cette copie sans recomposer tous les
-   * pixels : les déplacements de curseur deviennent alors quasi gratuits.
-   */
-  private lastRendered?: ImageData;
+  private renderBuffer?: ImageData;
 
   /**
    * Indique si les salissures ont changé depuis le dernier rendu.
@@ -135,9 +127,9 @@ export class DirtEngine {
       this.pixelCount * dirtTypes.length
     );
 
-    // Un seul buffer alloué pour toute la durée de vie du moteur.
-    this.renderBuffer =
-      new ImageData(this.width, this.height);
+    // Le buffer de composition complète n'est alloué qu'au premier
+    // rendu total (voir render()) : les cartes générées puis
+    // immédiatement nettoyées au pinceau ne paient jamais ce coût.
 
     // Convertit les couleurs hexadécimales en RGB une seule fois.
     this.dirtColors = dirtTypes.map(dirt => {
@@ -177,7 +169,9 @@ generate(
   // Toutes les cases sont propres au départ : l'ordre des couches
   // y reste canonique et le moteur peut donc les reconnaître
   // rapidement lors du rendu (voir generateLayerOrders()).
-  this.layerOrders.fill(0);
+  // Attention : un simple fill(0) est faux dès qu'il existe plus de
+  // deux salissures (l'ordre canonique est [0, 1, 2...], pas [0, 0, 0...]).
+  this.fillCanonicalOrders();
 
   // Génère chaque type de salissure autorisé.
   for (
@@ -243,9 +237,11 @@ generate(
   // Mémorise la quantité initiale réelle pour la progression.
   this.initialAmount = this.getRemainingAmount();
 
-  // Les salissures viennent d'être régénérées : toute la carte doit
-  // être recomposée au prochain rendu.
+  // Les salissures viennent d'être régénérées : invalide le cache
+  // de quantité restante avant la lecture ci-dessus, puis force un
+  // recomposition complète au prochain rendu.
   this.dirty = true;
+  this.remainingCacheValid = false;
   this.fullRedrawRequired = true;
   this.resetRegion();
 }
@@ -257,14 +253,15 @@ generate(
 /**
  * Mélange l'ordre des couches uniquement là où c'est utile.
  *
- * Deux pixels partagent le même ordre si leurs salissures sont
- * apparues en même temps (mêmes zones générées) : on ne tire donc
- * un ordre aléatoire que lors de la première apparition d'un pixel,
- * et on propage cet ordre à tous les pixels nés au même moment.
+ * Un ordre aléatoire n'a de sens que pour les pixels réellement
+ * recouverts par plusieurs salissures : pour un pixel à une seule
+ * couche, toutes les permutations sont visuellement identiques.
+ * On ne tire donc un ordre que lors du premier motif "composé"
+ * rencontré, et on le propage à tous les pixels partageant ce motif.
  *
- * Les pixels restés propres gardent l'ordre canonique [0, 1, 2...]
- * initialisé dans generate(), ce qui permet au rendu de les
- * reconnaître et de les traiter en bloc.
+ * Les pixels restés propres (et les pixels mono-couche) gardent
+ * l'ordre canonique [0, 1, 2...] initialisé dans generate(), ce qui
+ * permet au rendu de reconnaître les zones propres rapidement.
  */
 private generateLayerOrders(): void {
 
@@ -294,8 +291,9 @@ private generateLayerOrders(): void {
 
     const pattern = patternOf(pixel);
 
-    // Pixel propre : l'ordre canonique est déjà stocké.
-    if (pattern === 0) continue;
+    // Pixel propre ou mono-couche : l'ordre canonique déjà stocké
+    // donne exactement le même résultat visuel qu'un ordre mélangé.
+    if ((pattern & 0xf0) <= (1 << 4)) continue;
 
     let order = orderByPattern.get(pattern);
 
@@ -322,6 +320,26 @@ private generateLayerOrders(): void {
 
     for (let depth = 0; depth < dirtCount; depth++) {
       this.layerOrders[offset + depth] = order[depth];
+    }
+  }
+}
+
+/**
+ * Remplit layerOrders avec l'ordre canonique [0, 1, 2...] pour
+ * chaque pixel. Utilisé quand toutes les cases sont propres :
+ * un fill(0) global ne serait canonique que pour la première
+ * profondeur et ferait croire au rendu que les pixels sales sont
+ * propres (ce qui masquait toute la carte hors curseur).
+ */
+private fillCanonicalOrders(): void {
+
+  const dirtCount = this.dirtTypes.length;
+
+  // Écriture par strided fill : la valeur i occupe les positions
+  // i, i + dirtCount, i + 2*dirtCount... de tout le tableau.
+  for (let i = 0; i < dirtCount; i++) {
+    for (let p = i; p < this.layerOrders.length; p += dirtCount) {
+      this.layerOrders[p] = i;
     }
   }
 }
@@ -458,6 +476,9 @@ private generateLayerOrders(): void {
 
       this.dirty = true;
 
+      // La quantité restante a changé : le cache doit être recalculé.
+      this.remainingCacheValid = false;
+
       // Seule la zone touchée par le pinceau doit être recomposée.
       this.invalidateRegion(minX, minY, maxX, maxY);
     }
@@ -490,15 +511,14 @@ private generateLayerOrders(): void {
 /**
  * Dessine l'état actuel des salissures dans le Canvas.
  *
- * Trois stratégies, de la moins coûteuse à la plus coûteuse :
+ * Le Canvas conserve son contenu entre deux appels : il n'est donc
+ * jamais nécessaire de recomposer toute la carte à chaque frame.
  *
- * 1. Rien n'a changé depuis le dernier rendu : on réaffiche
- *    simplement la dernière image composée (déplacements du
- *    curseur, par exemple).
- * 2. Seule une partie de la carte a été nettoyée : on ne recompose
- *    que les rectangles touchés, puis on les envoie avec dirty rects.
- * 3. Premier rendu ou régénération complète : toute la carte est
- *    recomposée.
+ * - Rien n'a changé depuis le dernier rendu : sortie immédiate
+ *   (les simples déplacements du curseur ne coûtent rien).
+ * - Une zone a été nettoyée : seuls les pixels de cette zone sont
+ *   recomposés et envoyés via un dirty rect.
+ * - Premier rendu ou régénération : toute la carte est recomposée.
  *
  * Les pixels propres sont reconnus grâce à leur ordre canonique et
  * remplis d'un seul bloc, sans composition couche par couche.
@@ -508,59 +528,94 @@ render(
   baseImage: ImageData
 ): void {
 
-  // Cas 1 : aucune salissure retirée depuis le dernier rendu.
-  if (!this.dirty && this.lastRendered) {
-    ctx.putImageData(this.lastRendered, 0, 0);
-    return;
-  }
-
-  const pixels = this.renderBuffer.data;
-
-  // Le fond propre ne change jamais : on le recopie en entier.
-  pixels.set(baseImage.data);
+  // Aucune salissure retirée depuis le dernier rendu :
+  // le contenu du Canvas est déjà à jour, rien à faire.
+  if (!this.dirty) return;
 
   const dirtCount = this.dirtTypes.length;
 
   if (this.fullRedrawRequired || !this.hasRegion) {
 
-    // Cas 3 : composition de toute la carte d'un coup.
+    // Cas "toute la carte" : composition complète dans le buffer.
+    if (!this.renderBuffer) {
+      this.renderBuffer = new ImageData(this.width, this.height);
+    }
+
+    const pixels = this.renderBuffer.data;
+
+    // Le fond propre ne change jamais : on le recopie en entier.
+    pixels.set(baseImage.data);
+
     for (let pixel = 0; pixel < this.pixelCount; pixel++) {
       this.composePixel(pixel, dirtCount, pixels);
     }
 
     this.fullRedrawRequired = false;
-  } else {
+    this.resetRegion();
 
-    // Cas 2 : uniquement les zones qui ont été nettoyées.
-    for (let py = this.regionMinY; py <= this.regionMaxY; py++) {
+    this.dirty = false;
 
-      const rowOffset = py * this.width;
+    ctx.putImageData(this.renderBuffer, 0, 0);
+    return;
+  }
 
-      for (let px = this.regionMinX; px <= this.regionMaxX; px++) {
-        this.composePixel(rowOffset + px, dirtCount, pixels);
-      }
+  // Cas "zone touchée" : on ne recompose que le rectangle modifié.
+  const regionWidth = this.regionMaxX - this.regionMinX + 1;
+  const regionHeight = this.regionMaxY - this.regionMinY + 1;
+
+  // Buffer temporaire limité à la zone, réutilisé entre les frames.
+  if (
+    !this.regionBuffer ||
+    this.regionBuffer.width !== regionWidth ||
+    this.regionBuffer.height !== regionHeight
+  ) {
+    this.regionBuffer = new ImageData(regionWidth, regionHeight);
+  }
+
+  const pixels = this.regionBuffer.data;
+
+  for (let py = 0; py < regionHeight; py++) {
+
+    const rowOffset = (this.regionMinY + py) * this.width;
+
+    for (let px = 0; px < regionWidth; px++) {
+
+      const pixel = rowOffset + this.regionMinX + px;
+      const outOffset = (py * regionWidth + px) * 4;
+
+      // Repart du fond propre pour cette zone...
+      const baseOffset = pixel * 4;
+
+      pixels[outOffset] = baseImage.data[baseOffset];
+      pixels[outOffset + 1] = baseImage.data[baseOffset + 1];
+      pixels[outOffset + 2] = baseImage.data[baseOffset + 2];
+      pixels[outOffset + 3] = baseImage.data[baseOffset + 3];
+
+      // ...puis compose les salissures encore présentes.
+      this.composePixel(pixel, dirtCount, pixels);
     }
   }
 
-  // Enregistre cette version pour le cas 1 des prochaines frames.
-  if (!this.lastRendered) {
-    this.lastRendered = new ImageData(
-      new Uint8ClampedArray(pixels),
-      this.width,
-      this.height
-    );
-  } else {
-    this.lastRendered.data.set(pixels);
-  }
-
-  // Réinitialise la zone modifiée.
   this.resetRegion();
 
   this.dirty = false;
 
-  // Envoie le résultat final au Canvas.
-  ctx.putImageData(this.lastRendered, 0, 0);
+  // N'envoie que la zone modifiée au Canvas.
+  ctx.putImageData(
+    this.regionBuffer,
+    0,
+    0,
+    this.regionMinX,
+    this.regionMinY,
+    regionWidth,
+    regionHeight
+  );
 }
+
+/**
+ * Buffer temporaire pour le rendu incrémental d'une zone.
+ */
+private regionBuffer?: ImageData;
 
 /**
  * Étend la zone à recomposer lors du prochain rendu.
@@ -667,9 +722,19 @@ private isCanonicalOrder(
   // --------------------------------
 
   /**
-   * Calcule la quantité totale de salissure encore présente.
+   * Retourne la quantité totale de salissure encore présente.
+   *
+   * Le résultat est mis en cache : il n'est recalculé que si des
+   * salissures ont été retirées depuis la dernière consultation.
+   * Ce parcourt complet des couches était appelé plusieurs fois par
+   * seconde (progression + test de fin de carte) et pénalisait
+   * fortement les grandes cartes.
    */
   getRemainingAmount(): number {
+
+    if (this.remainingCacheValid) {
+      return this.cachedRemainingAmount;
+    }
 
     let remaining = 0;
 
@@ -680,8 +745,14 @@ private isCanonicalOrder(
       }
     }
 
+    this.cachedRemainingAmount = remaining;
+    this.remainingCacheValid = true;
+
     return remaining;
   }
+
+  private cachedRemainingAmount = 0;
+  private remainingCacheValid = false;
 
 
   /**
