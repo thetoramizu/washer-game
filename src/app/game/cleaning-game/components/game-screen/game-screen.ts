@@ -27,6 +27,15 @@ import { CleaningTool } from '../../../models/cleaning-tool';
 })
 export class GameScreen implements AfterViewInit {
 
+  /**
+   * Montant rapporté par une carte intégralement nettoyée.
+   *
+   * Identique pour toutes les cartes quelle que soit leur taille
+   * (la récompense accumulée en cours de partie est normalisée par
+   * la quantité initiale de salissure — voir computeReward()).
+   */
+  static readonly MAP_COMPLETION_REWARD = 500;
+
   @ViewChild('gameCanvas')
   canvasRef!: ElementRef<HTMLCanvasElement>;
 
@@ -69,6 +78,12 @@ export class GameScreen implements AfterViewInit {
   private pointerX = -100;
   private pointerY = -100;
   private pointerInside = false;
+
+  // Dernière position du curseur dessinée dans le canvas.
+  // Nécessaire pour l'effacer avant de redessiner la carte :
+  // sans cela, son empreinte restait visible à chaque mouvement.
+  private lastCursorX = -100;
+  private lastCursorY = -100;
 
   progress = 0;
 
@@ -238,26 +253,41 @@ export class GameScreen implements AfterViewInit {
   }
 
   onPointerMove(event: PointerEvent): void {
+    const previousX = this.pointerX;
+    const previousY = this.pointerY;
+
     this.updatePointerPosition(event);
 
     if (this.isCleaning) {
       this.cleanAtPointer();
     }
 
-    // Un seul rendu par événement de pointeur : le moteur réaffiche
-    // son image déjà composée s'il n'y a rien à recomposer.
+    // Le curseur est dessiné directement dans le canvas : tout
+    // déplacement doit donc effacer l'ancienne position avant de
+    // redessiner la carte et le nouveau curseur (voir render()).
+    this.lastCursorX = previousX;
+    this.lastCursorY = previousY;
+
     this.render();
   }
 
   onPointerUp(): void {
     this.isCleaning = false;
     this.lastCleanTime = 0;
+    this.render();
     this.updateProgress();
   }
 
   onPointerEnter(event: PointerEvent): void {
+    const previousX = this.pointerX;
+    const previousY = this.pointerY;
+
     this.pointerInside = true;
     this.updatePointerPosition(event);
+
+    this.lastCursorX = previousX;
+    this.lastCursorY = previousY;
+
     this.render();
   }
 
@@ -330,10 +360,13 @@ export class GameScreen implements AfterViewInit {
    * Convertit la quantité de salissure retirée en gain.
    *
    * Le moteur indique quelle quantité a été retirée pour chaque type
-   * de salissure : chacun est rémunéré selon son propre multiplicateur,
-   * à hauteur d'environ 1 $ par zone entièrement nettoyée. La valeur
-   * reste volontairement modeste pour rester équilibrée avec les prix
-   * de la boutique et le déblocage des cartes.
+   * de salissure : chacun est rémunéré selon son propre multiplicateur.
+   *
+   * Le total est ensuite normalisé par la taille de la carte (surface
+   * et volume initial de saleté) afin qu'une carte entièrement nettoyée
+   * rapporte un montant constant, quelle que soit sa dimension : sans
+   * cette normalisation, les grandes cartes empochaient des sommes
+   * démesurées comparées au prix des améliorations (~100 $).
    */
   private computeReward(removedPerDirt: number[]): number {
 
@@ -347,11 +380,17 @@ export class GameScreen implements AfterViewInit {
 
       reward +=
         removed *
-        0.002 *
         this.dirtTypes[i].rewardMultiplier;
     }
 
-    return reward;
+    // Une carte terminée rapporte MAP_COMPLETION_REWARD $.
+    // earnRate = amount / initialAmount, donc reward_final =
+    // earnRate * MAP_COMPLETION_REWARD.
+    return (
+      reward *
+      GameScreen.MAP_COMPLETION_REWARD /
+      Math.max(1, this.dirtEngine.getInitialAmount())
+    );
   }
 
   // --------------------------------
@@ -370,6 +409,37 @@ export class GameScreen implements AfterViewInit {
       return;
     }
 
+    // Le curseur étant dessiné directement dans le canvas (et non
+    // par-dessus), son ancienne position doit être effacée avant
+    // toute recomposition : sans cela, sa traînée restait visible
+    // et le rendu incrémental du moteur ne pouvait pas la masquer.
+    const tool = this.activeTool;
+
+    const cursorRadius = Math.ceil(tool?.radius ?? 0) + 5;
+
+    if (tool && this.lastCursorX >= 0 && this.lastCursorY >= 0) {
+
+      const oldMinX = Math.max(0, Math.floor(this.lastCursorX - cursorRadius));
+      const oldMinY = Math.max(0, Math.floor(this.lastCursorY - cursorRadius));
+      const oldMaxX = Math.min(this.WIDTH - 1, Math.ceil(this.lastCursorX + cursorRadius));
+      const oldMaxY = Math.min(this.HEIGHT - 1, Math.ceil(this.lastCursorY + cursorRadius));
+
+      // Si le nouveau curseur chevauche l'ancien, on repeint aussi
+      // sa zone : ainsi un seul dirty rect recouvre les deux et le
+      // moteur n'écrase pas le dessin du nouveau curseur avec une
+      // recomposition postérieure de l'ancienne zone.
+      if (this.pointerInside) {
+        this.dirtEngine.invalidateRegion(
+          Math.max(0, Math.min(oldMinX, Math.floor(this.pointerX - cursorRadius))),
+          Math.max(0, Math.min(oldMinY, Math.floor(this.pointerY - cursorRadius))),
+          Math.min(this.WIDTH - 1, Math.max(oldMaxX, Math.ceil(this.pointerX + cursorRadius))),
+          Math.min(this.HEIGHT - 1, Math.max(oldMaxY, Math.ceil(this.pointerY + cursorRadius)))
+        );
+      } else {
+        this.dirtEngine.invalidateRegion(oldMinX, oldMinY, oldMaxX, oldMaxY);
+      }
+    }
+
     // Le moteur génère l'image finale de la carte.
     this.dirtEngine.render(
       this.ctx,
@@ -377,9 +447,10 @@ export class GameScreen implements AfterViewInit {
     );
 
     // Affichage du curseur de nettoyage.
-    const tool = this.activeTool;
-
     if (this.pointerInside && tool) {
+
+      this.lastCursorX = this.pointerX;
+      this.lastCursorY = this.pointerY;
 
       this.ctx.beginPath();
 
@@ -429,7 +500,8 @@ export class GameScreen implements AfterViewInit {
     if (this.dirtEngine.isComplete() && this.mapReward() === 0) {
 
       const reward = Math.max(
-        50,
+        GameScreen.MAP_COMPLETION_REWARD *
+          DirtEngine.COMPLETION_THRESHOLD / 100,
         Math.round(this.earnedMoney)
       );
 
@@ -458,6 +530,11 @@ export class GameScreen implements AfterViewInit {
     this.mapReward.set(0);
 
     this.lastCleanTime = 0;
+
+    // L'ancienne position du curseur n'a plus de sens sur la
+    // carte régénérée (le rendu complet efface tout).
+    this.lastCursorX = -100;
+    this.lastCursorY = -100;
 
     this.render();
 
@@ -511,6 +588,8 @@ export class GameScreen implements AfterViewInit {
     this.pointerX = -100;
     this.pointerY = -100;
     this.pointerInside = false;
+    this.lastCursorX = -100;
+    this.lastCursorY = -100;
 
     // Reconstruit le moteur et les Canvas
     // avec les dimensions de la nouvelle carte.

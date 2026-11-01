@@ -72,7 +72,7 @@ export class DirtEngine {
    * est considérée terminée et la récompense versée dès que ce seuil
    * est atteint : le joueur garde donc une petite marge d'erreur.
    */
-  static readonly COMPLETION_THRESHOLD = 95;
+  static readonly COMPLETION_THRESHOLD = 97;
 
   /**
    * Buffer de rendu réutilisé pour les recompositions complètes.
@@ -514,10 +514,10 @@ private fillCanonicalOrders(): void {
  * Le Canvas conserve son contenu entre deux appels : il n'est donc
  * jamais nécessaire de recomposer toute la carte à chaque frame.
  *
- * - Rien n'a changé depuis le dernier rendu : sortie immédiate
- *   (les simples déplacements du curseur ne coûtent rien).
- * - Une zone a été nettoyée : seuls les pixels de cette zone sont
- *   recomposés et envoyés via un dirty rect.
+ * - Une zone a été invalidée (nettoyage, ou composant qui signale
+ *   une région à repeindre — ancienne position du curseur) : seuls
+ *   les pixels de cette zone sont recomposés et envoyés via un
+ *   dirty rect.
  * - Premier rendu ou régénération : toute la carte est recomposée.
  *
  * Les pixels propres sont reconnus grâce à leur ordre canonique et
@@ -528,13 +528,18 @@ render(
   baseImage: ImageData
 ): void {
 
-  // Aucune salissure retirée depuis le dernier rendu :
-  // le contenu du Canvas est déjà à jour, rien à faire.
-  if (!this.dirty) return;
-
   const dirtCount = this.dirtTypes.length;
 
   if (this.fullRedrawRequired || !this.hasRegion) {
+
+    // Rien à recomposer et aucune recomposition totale requise :
+    // le contenu du Canvas est déjà à jour, sortie immédiate
+    // (les simples déplacements du curseur hors carte ne coûtent
+    // rien). En revanche, si une région a été signalée comme à
+    // repeindre, on doit la recomposer même sans changement de
+    // salissure : c'est ce qui permet d'effacer le curseur que
+    // le composant dessine directement dans le Canvas.
+    if (!this.dirty && !this.hasRegion) return;
 
     // Cas "toute la carte" : composition complète dans le buffer.
     if (!this.renderBuffer) {
@@ -558,6 +563,12 @@ render(
     ctx.putImageData(this.renderBuffer, 0, 0);
     return;
   }
+
+  // Aucune salissure retirée depuis le dernier rendu : seule la
+  // région signalée par le composant doit être repeinte (elle ne
+  // contient alors que le fond et les salissures inchangées, ce
+  // qui efface tout dessin superposé comme le curseur). La région
+  // ci-dessous sera recomposée puis le drapeau "dirty" sera levé.
 
   // Cas "zone touchée" : on ne recompose que le rectangle modifié.
   const regionWidth = this.regionMaxX - this.regionMinX + 1;
