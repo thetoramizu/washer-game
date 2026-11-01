@@ -9,7 +9,7 @@
 
     <div class="progress-info">
       <span>Propreté</span>
-      <strong>{{ progress | number:'1.0-0' }} %</strong>
+      <strong>{{ progress() | number:'1.0-0' }} %</strong>
     </div>
 
   </header>
@@ -17,13 +17,18 @@
   <div class="progress-track">
     <div
       class="progress-fill"
-      [style.width.%]="progress"
+      [class.complete]="mapReward() > 0"
+      [style.width.%]="progress()"
     ></div>
   </div>
 
   @if (mapReward() > 0) {
     <div class="victory-banner">
       Carte terminée ! Récompense : {{ mapReward() }} $
+    </div>
+  } @else if (showFinishHint) {
+    <div class="finish-hint">
+      Encore un petit effort pour réclamer la récompense !
     </div>
   }
 
@@ -32,12 +37,6 @@
     <canvas
       #gameCanvas
       class="game-canvas"
-      (pointerdown)="onPointerDown($event)"
-      (pointermove)="onPointerMove($event)"
-      (pointerup)="onPointerUp()"
-      (pointercancel)="onPointerUp()"
-      (pointerenter)="onPointerEnter($event)"
-      (pointerleave)="onPointerLeave()"
     ></canvas>
 
   </section>

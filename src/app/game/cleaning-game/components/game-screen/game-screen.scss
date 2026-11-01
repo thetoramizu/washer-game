@@ -81,6 +81,21 @@
   text-align: center;
 }
 
+/* Indication affichée entre le seuil d'affichage « 100 % »
+   et le seuil de validation de la carte. */
+.finish-hint {
+  max-width: 1100px;
+  margin: 10px auto 0;
+
+  color: #a17b3d;
+  font-size: 13px;
+  text-align: center;
+}
+
+.progress-fill.complete {
+  background: #52845e;
+}
+
 /* --------------------------------
    Zone de jeu
 -------------------------------- */
@@ -99,7 +114,11 @@
 
 .game-canvas {
   display: block;
-  width: 100%;
+
+  /* Le canvas s'affiche à sa résolution native : les grandes
+     cartes paraissent plus petites plutôt que floues ou
+     surdimensionnées, et le rendu reste fluide. */
+  max-width: 100%;
   height: auto;
 
   border-radius: 5px;
