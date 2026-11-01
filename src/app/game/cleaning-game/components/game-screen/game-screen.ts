@@ -244,6 +244,8 @@ export class GameScreen implements AfterViewInit {
       this.cleanAtPointer();
     }
 
+    // Un seul rendu par événement de pointeur : le moteur réaffiche
+    // son image déjà composée s'il n'y a rien à recomposer.
     this.render();
   }
 
@@ -309,14 +311,10 @@ export class GameScreen implements AfterViewInit {
       deltaTime
     );
 
-    // Accumule les gains selon les salissures retirées.
-    if (result.removed > 0) {
-      this.earnedMoney += this.computeReward(result.removed);
-    }
-
-    // Actualise le rendu uniquement si quelque chose a changé.
+    // Accumule les gains selon les salissures retirées,
+    // rémunérées type par type.
     if (result.changed) {
-      this.render();
+      this.earnedMoney += this.computeReward(result.removedPerDepth);
     }
 
     // Actualisation périodique de la progression.
@@ -331,31 +329,29 @@ export class GameScreen implements AfterViewInit {
   /**
    * Convertit la quantité de salissure retirée en gain.
    *
-   * Chaque type de salissure possède son propre multiplicateur
-   * de récompense ; la valeur brute est volontairement modeste
-   * pour rester équilibrée avec les prix de la boutique.
+   * Le moteur indique quelle quantité a été retirée pour chaque type
+   * de salissure : chacun est rémunéré selon son propre multiplicateur,
+   * à hauteur d'environ 1 $ par zone entièrement nettoyée. La valeur
+   * reste volontairement modeste pour rester équilibrée avec les prix
+   * de la boutique et le déblocage des cartes.
    */
-  private computeReward(removed: number): number {
+  private computeReward(removedPerDirt: number[]): number {
 
-    let multiplier = 0;
+    let reward = 0;
 
-    const density = this.activeMap().dirtDensity;
+    for (let i = 0; i < this.dirtTypes.length; i++) {
 
-    const totalDensity = Object.values(density)
-      .reduce((sum, value) => sum + value, 0);
+      const removed = removedPerDirt[i] ?? 0;
 
-    // Moyenne pondérée des multiplicateurs de la carte.
-    for (const dirt of this.dirtTypes) {
+      if (removed === 0) continue;
 
-      const weight = density[dirt.id];
-
-      if (weight === undefined) continue;
-
-      multiplier +=
-        dirt.rewardMultiplier * (weight / totalDensity);
+      reward +=
+        removed *
+        0.002 *
+        this.dirtTypes[i].rewardMultiplier;
     }
 
-    return removed * 0.01 * multiplier;
+    return reward;
   }
 
   // --------------------------------
@@ -428,8 +424,9 @@ export class GameScreen implements AfterViewInit {
 
     this.progress = this.dirtEngine.getProgress();
 
-    // La carte est terminée : on verse la récompense une seule fois.
-    if (this.progress >= 100 && this.mapReward() === 0) {
+    // Le seuil de propreté est atteint : on verse la récompense
+    // une seule fois, sans attendre les derniers pixels restants.
+    if (this.dirtEngine.isComplete() && this.mapReward() === 0) {
 
       const reward = Math.max(
         50,
