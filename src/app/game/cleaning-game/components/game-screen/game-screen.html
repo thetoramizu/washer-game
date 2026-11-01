@@ -1,1 +1,116 @@
-<p>game-screen works!</p>
+<main class="game-screen">
+
+  <header class="game-header">
+
+    <div>
+      <h1>{{ activeMap().name }}</h1>
+      <span>Frotte les salissures pour nettoyer la surface</span>
+    </div>
+
+    <div class="progress-info">
+      <span>Propreté</span>
+      <strong>{{ progress | number:'1.0-0' }} %</strong>
+    </div>
+
+  </header>
+
+  <div class="progress-track">
+    <div
+      class="progress-fill"
+      [style.width.%]="progress"
+    ></div>
+  </div>
+
+  @if (mapReward() > 0) {
+    <div class="victory-banner">
+      Carte terminée ! Récompense : {{ mapReward() }} $
+    </div>
+  }
+
+  <section class="game-area">
+
+    <canvas
+      #gameCanvas
+      class="game-canvas"
+      (pointerdown)="onPointerDown($event)"
+      (pointermove)="onPointerMove($event)"
+      (pointerup)="onPointerUp()"
+      (pointercancel)="onPointerUp()"
+      (pointerenter)="onPointerEnter($event)"
+      (pointerleave)="onPointerLeave()"
+    ></canvas>
+
+  </section>
+
+  <footer class="game-footer">
+
+    <div class="tool-selector">
+
+      @for (tool of ownedTools; track tool.id) {
+
+        <button
+          type="button"
+          [class.active]="gamingState.equippedToolId() === tool.id"
+          (click)="selectTool(tool.id)"
+        >
+          <strong>{{ tool.name }}</strong>
+          <small>
+            Rayon {{ tool.radius | number:'1.0-0' }} ·
+            Puissance {{ tool.power | number:'1.0-1' }}
+          </small>
+        </button>
+
+      }
+
+    </div>
+
+    <div class="money-display">
+      {{ gamingState.money() }} $
+    </div>
+
+  </footer>
+
+  <div class="dirt-types">
+
+    @for (dirt of dirtTypes; track dirt.id) {
+
+      @if (activeMap().dirtDensity[dirt.id] !== undefined) {
+
+        <div class="dirt-type">
+          <span
+            class="color-preview"
+            [style.background]="dirt.color"
+          ></span>
+          <div>
+            <strong>{{ dirt.name }}</strong>
+            <small>Résistance {{ dirt.resistance }}</small>
+          </div>
+        </div>
+
+      }
+
+    }
+
+  </div>
+
+  <nav class="game-actions">
+
+    <button type="button" (click)="resetGame()">
+      Recommencer
+    </button>
+
+    <button type="button" (click)="goShop()">
+      Boutique
+    </button>
+
+    <button type="button" (click)="goMaps()">
+      Changer de carte
+    </button>
+
+    <button type="button" (click)="goMenu()">
+      Menu principal
+    </button>
+
+  </nav>
+
+</main>
