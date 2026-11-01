@@ -1,0 +1,227 @@
+.shop {
+  min-height: 100vh;
+  padding: 40px;
+  box-sizing: border-box;
+
+  background: #f5f0e6;
+  color: #454139;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  max-width: 1100px;
+  margin: 0 auto 35px;
+}
+
+.page-header h1 {
+  margin: 0;
+  color: #648b70;
+  font-size: 36px;
+}
+
+.page-header p {
+  color: #898173;
+}
+
+.money-display {
+  padding: 12px 22px;
+  border-radius: 30px;
+
+  background: #fffaf0;
+  color: #a17b3d;
+  font-weight: bold;
+}
+
+.shop-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 24px;
+
+  max-width: 1100px;
+  margin: auto;
+}
+
+.tool-card {
+  background: white;
+  border-radius: 14px;
+  overflow: hidden;
+
+  border: 1px solid #e5dcca;
+
+  box-shadow: 0 4px 12px rgba(70, 60, 40, 0.06);
+}
+
+.tool-content {
+  padding: 20px;
+}
+
+.tool-content h2 {
+  margin: 0 0 8px;
+}
+
+.description {
+  min-height: 40px;
+  color: #898173;
+  font-size: 14px;
+}
+
+.stats {
+  display: flex;
+  gap: 15px;
+  margin: 14px 0;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  font-size: 13px;
+}
+
+.stat span {
+  color: #898173;
+}
+
+.efficiency {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 15px;
+}
+
+.efficiency-chip {
+  padding: 4px 10px;
+  border-radius: 20px;
+
+  background: #f1ebdd;
+  color: #625d53;
+
+  font-size: 12px;
+}
+
+button {
+  width: 100%;
+  padding: 13px;
+
+  border: none;
+  border-radius: 10px;
+
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.buy-button {
+  background: #e6d6b7;
+  color: #765e36;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.owned-badge,
+.equipped-badge,
+.maxed-badge {
+  display: inline-block;
+  padding: 6px 12px;
+  border-radius: 20px;
+
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.owned-badge {
+  background: #dcefe0;
+  color: #52845e;
+}
+
+.equipped-badge {
+  background: #cfe6f8;
+  color: #3d6f9e;
+}
+
+.maxed-badge {
+  background: #f8e9c9;
+  color: #a17b3d;
+}
+
+/* --------------------------------
+   Améliorations
+-------------------------------- */
+
+.upgrades {
+  margin-top: 18px;
+  padding-top: 15px;
+
+  border-top: 1px dashed #e5dcca;
+}
+
+.upgrades h3 {
+  margin: 0 0 10px;
+
+  font-size: 15px;
+  color: #625d53;
+}
+
+.upgrade-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+
+  padding: 8px 0;
+}
+
+.upgrade-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+
+  font-size: 13px;
+}
+
+.upgrade-info small {
+  color: #898173;
+}
+
+.upgrade-button {
+  width: auto;
+
+  padding: 8px 14px;
+
+  background: #78a887;
+  color: white;
+
+  font-size: 13px;
+}
+
+footer {
+  max-width: 1100px;
+  margin: 30px auto 0;
+}
+
+.back-button {
+  max-width: 200px;
+  background: #e8e1d4;
+  color: #625d53;
+}
+
+@media (max-width: 600px) {
+  .shop {
+    padding: 20px;
+  }
+
+  .page-header {
+    align-items: flex-start;
+    gap: 15px;
+  }
+
+  .page-header h1 {
+    font-size: 26px;
+  }
+}

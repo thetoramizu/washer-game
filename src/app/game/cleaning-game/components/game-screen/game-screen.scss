@@ -1,0 +1,259 @@
+.game-screen {
+  min-height: 100vh;
+
+  display: flex;
+  flex-direction: column;
+
+  padding: 30px;
+  box-sizing: border-box;
+
+  background: #f5f0e6;
+  color: #454139;
+}
+
+/* --------------------------------
+   En-tête & progression
+-------------------------------- */
+
+.game-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto 15px;
+}
+
+.game-header h1 {
+  margin: 0 0 6px;
+
+  color: #648b70;
+  font-size: 24px;
+}
+
+.game-header span,
+.progress-info span {
+  color: #898173;
+  font-size: 13px;
+}
+
+.progress-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.progress-info strong {
+  font-size: 25px;
+  color: #52845e;
+}
+
+.progress-track {
+  max-width: 1100px;
+  width: 100%;
+  margin: 0 auto;
+
+  height: 8px;
+  background: #e5dcca;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #78a887;
+  transition: width 0.15s;
+}
+
+.victory-banner {
+  max-width: 1100px;
+  margin: 15px auto 0;
+
+  padding: 12px 20px;
+  border-radius: 10px;
+
+  background: #dcefe0;
+  color: #52845e;
+
+  font-weight: bold;
+  text-align: center;
+}
+
+/* --------------------------------
+   Zone de jeu
+-------------------------------- */
+
+.game-area {
+  max-width: 1100px;
+  width: 100%;
+  margin: 20px auto 0;
+
+  background: #fffaf0;
+  border: 1px solid #e5dcca;
+  border-radius: 10px;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+.game-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+
+  border-radius: 5px;
+
+  cursor: none;
+  touch-action: none;
+  user-select: none;
+}
+
+/* --------------------------------
+   Barre d'outils
+-------------------------------- */
+
+.game-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 15px;
+
+  max-width: 1100px;
+  width: 100%;
+  margin: 20px auto 0;
+}
+
+.tool-selector {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.tool-selector button {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+
+  padding: 12px 18px;
+
+  border: 2px solid #e5dcca;
+  border-radius: 8px;
+
+  background: #fffaf0;
+  color: #454139;
+
+  cursor: pointer;
+
+  transition:
+    border-color 0.2s,
+    background 0.2s;
+}
+
+.tool-selector button:hover {
+  background: #fff6e2;
+}
+
+.tool-selector button.active {
+  border-color: #78a887;
+  background: #dcefe0;
+}
+
+.tool-selector small {
+  color: #898173;
+}
+
+.money-display {
+  padding: 12px 22px;
+  border-radius: 30px;
+
+  background: #fffaf0;
+  border: 1px solid #e5dcca;
+
+  color: #a17b3d;
+  font-weight: bold;
+}
+
+/* --------------------------------
+   Légende des salissures
+-------------------------------- */
+
+.dirt-types {
+  display: flex;
+  gap: 15px;
+  flex-wrap: wrap;
+
+  max-width: 1100px;
+  margin: 20px auto 0;
+}
+
+.dirt-type {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  padding: 10px 14px;
+
+  background: #fffaf0;
+  border: 1px solid #e5dcca;
+  border-radius: 6px;
+}
+
+.dirt-type div {
+  display: flex;
+  flex-direction: column;
+}
+
+.dirt-type small {
+  color: #898173;
+}
+
+.color-preview {
+  width: 15px;
+  height: 15px;
+  border-radius: 4px;
+}
+
+/* --------------------------------
+   Actions
+-------------------------------- */
+
+.game-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+
+  max-width: 1100px;
+  margin: 25px auto 0;
+}
+
+.game-actions button {
+  padding: 11px 18px;
+
+  border: none;
+  border-radius: 6px;
+
+  background: #e8e1d4;
+  color: #625d53;
+
+  font-weight: bold;
+  cursor: pointer;
+
+  transition: background 0.2s;
+}
+
+.game-actions button:hover {
+  background: #ddd4c2;
+}
+
+@media (max-width: 600px) {
+  .game-screen {
+    padding: 15px;
+  }
+
+  .game-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+}
