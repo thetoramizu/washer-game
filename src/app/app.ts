@@ -1,8 +1,9 @@
 import { Component, signal } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
+import { CleaningGame } from './game/cleaning-game/cleaning-game';
 
 @Component({
-  imports: [RouterOutlet],
+  imports: [RouterOutlet, CleaningGame],
   selector: 'app-root',
   styleUrl: './app.scss',
   templateUrl: './app.html',
