@@ -32,6 +32,23 @@
       (pointerleave)="onPointerLeave()">
     </canvas>
 
+    <div class="dirt-types">
+
+  @for (dirt of dirtTypes; track dirt.id) {
+    <div class="dirt-type">
+      <span
+        class="color-preview"
+        [style.background]="dirt.color">
+      </span>
+
+      <strong>{{ dirt.name }}</strong>
+
+      <small>Résistance : {{ dirt.resistance }}</small>
+    </div>
+  }
+
+</div>
+
   </div>
 
   <footer class="game-footer">

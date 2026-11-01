@@ -6,6 +6,8 @@ import {
   ViewChild,
   ChangeDetectionStrategy
 } from '@angular/core';
+import { DIRT_TYPES } from '../models/dirt-types.data';
+
 
 @Component({
   imports: [],
@@ -18,6 +20,9 @@ export class CleaningGame implements AfterViewInit {
   @ViewChild('gameCanvas')
   canvasRef!: ElementRef<HTMLCanvasElement>;
 
+  dirtTypes = DIRT_TYPES;
+
+
   private readonly WIDTH = 800;
   private readonly HEIGHT = 500;
 
@@ -25,10 +30,19 @@ export class CleaningGame implements AfterViewInit {
   private ctx!: CanvasRenderingContext2D;
 
   private cleanLayer!: HTMLCanvasElement;
-  private dirtLayer!: HTMLCanvasElement;
+  // private dirtLayer!: HTMLCanvasElement;
+  // Toutes les couches de salissures
+private dirtLayers: Map<
+  string,
+  HTMLCanvasElement
+> = new Map();
 
   private cleanCtx!: CanvasRenderingContext2D;
-  private dirtCtx!: CanvasRenderingContext2D;
+  // private dirtCtx!: CanvasRenderingContext2D;
+  private dirtContexts: Map<
+  string,
+  CanvasRenderingContext2D
+> = new Map();
 
   private isCleaning = false;
   private pointerX = -100;
@@ -47,38 +61,75 @@ export class CleaningGame implements AfterViewInit {
     this.initializeGame();
   }
 
-  private initializeGame(): void {
-    this.canvas = this.canvasRef.nativeElement;
+  // private initializeGame(): void {
+  //   this.canvas = this.canvasRef.nativeElement;
 
-    this.canvas.width = this.WIDTH;
-    this.canvas.height = this.HEIGHT;
+  //   this.canvas.width = this.WIDTH;
+  //   this.canvas.height = this.HEIGHT;
 
-    this.ctx = this.canvas.getContext('2d')!;
+  //   this.ctx = this.canvas.getContext('2d')!;
 
-    // Création des couches indépendantes
-    this.cleanLayer = document.createElement('canvas');
-    this.dirtLayer = document.createElement('canvas');
+  //   // Création des couches indépendantes
+  //   this.cleanLayer = document.createElement('canvas');
+  //   this.dirtLayer = document.createElement('canvas');
 
-    this.cleanLayer.width = this.WIDTH;
-    this.cleanLayer.height = this.HEIGHT;
+  //   this.cleanLayer.width = this.WIDTH;
+  //   this.cleanLayer.height = this.HEIGHT;
 
-    this.dirtLayer.width = this.WIDTH;
-    this.dirtLayer.height = this.HEIGHT;
+  //   this.dirtLayer.width = this.WIDTH;
+  //   this.dirtLayer.height = this.HEIGHT;
 
-    this.cleanCtx = this.cleanLayer.getContext('2d')!;
+  //   this.cleanCtx = this.cleanLayer.getContext('2d')!;
 
-    this.dirtCtx = this.dirtLayer.getContext(
-      '2d',
-      { willReadFrequently: true }
-    )!;
+  //   this.dirtCtx = this.dirtLayer.getContext(
+  //     '2d',
+  //     { willReadFrequently: true }
+  //   )!;
 
-    this.generateCleanSurface();
-    this.generateDirtySurface();
+  //   this.generateCleanSurface();
+  //   this.generateDirtySurface();
 
-    this.initialDirt = this.calculateDirt();
+  //   this.initialDirt = this.calculateDirt();
 
-    this.render();
+  //   this.render();
+  // }
+
+private initializeGame(): void {
+  this.canvas = this.canvasRef.nativeElement;
+
+  this.canvas.width = this.WIDTH;
+  this.canvas.height = this.HEIGHT;
+
+  this.ctx = this.canvas.getContext('2d')!;
+
+  // Création de la surface propre
+  this.cleanLayer = document.createElement('canvas');
+  this.cleanLayer.width = this.WIDTH;
+  this.cleanLayer.height = this.HEIGHT;
+
+  this.cleanCtx = this.cleanLayer.getContext('2d')!;
+
+  // Création des différentes couches sales
+  for (const dirt of this.dirtTypes) {
+
+    const layer = document.createElement('canvas');
+
+    layer.width = this.WIDTH;
+    layer.height = this.HEIGHT;
+
+    const context = layer.getContext('2d')!;
+
+    this.dirtLayers.set(dirt.id, layer);
+    this.dirtContexts.set(dirt.id, context);
   }
+
+  this.generateCleanSurface();
+  this.generateDirtySurfaces();
+
+  this.initialDirt = this.calculateDirt();
+
+  this.render();
+}
 
   // --------------------------------
   // Génération de la surface propre
@@ -125,36 +176,78 @@ export class CleaningGame implements AfterViewInit {
   // Génération de la salissure
   // --------------------------------
 
-  private generateDirtySurface(): void {
-    const ctx = this.dirtCtx;
+  private generateDirtySurfaces(): void {
 
-    ctx.globalCompositeOperation = 'source-over';
+  for (const dirt of this.dirtTypes) {
 
-    // Couche générale de saleté
-    ctx.fillStyle = '#514d32';
-    ctx.fillRect(0, 0, this.WIDTH, this.HEIGHT);
+    const ctx = this.dirtContexts.get(dirt.id);
 
-    // Taches de mousse et de moisissure
-    for (let i = 0; i < 250; i++) {
+    if (!ctx) continue;
+
+    ctx.clearRect(
+      0,
+      0,
+      this.WIDTH,
+      this.HEIGHT
+    );
+
+    // Chaque salissure possède sa propre apparence
+    for (let i = 0; i < 90; i++) {
 
       const x = Math.random() * this.WIDTH;
       const y = Math.random() * this.HEIGHT;
 
-      const radius = 5 + Math.random() * 35;
+      const radius = 8 + Math.random() * 35;
 
       ctx.beginPath();
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
 
-      ctx.fillStyle =
-        Math.random() > 0.5
-          ? 'rgba(45, 85, 35, 0.8)'
-          : 'rgba(80, 65, 35, 0.7)';
+      ctx.arc(
+        x,
+        y,
+        radius,
+        0,
+        Math.PI * 2
+      );
+
+      ctx.fillStyle = dirt.color;
+      ctx.globalAlpha = 0.65 + Math.random() * 0.35;
 
       ctx.fill();
     }
 
-    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
   }
+}
+  // private generateDirtySurface(): void {
+  //   const ctx = this.dirtCtx;
+
+  //   ctx.globalCompositeOperation = 'source-over';
+
+  //   // Couche générale de saleté
+  //   ctx.fillStyle = '#514d32';
+  //   ctx.fillRect(0, 0, this.WIDTH, this.HEIGHT);
+
+  //   // Taches de mousse et de moisissure
+  //   for (let i = 0; i < 250; i++) {
+
+  //     const x = Math.random() * this.WIDTH;
+  //     const y = Math.random() * this.HEIGHT;
+
+  //     const radius = 5 + Math.random() * 35;
+
+  //     ctx.beginPath();
+  //     ctx.arc(x, y, radius, 0, Math.PI * 2);
+
+  //     ctx.fillStyle =
+  //       Math.random() > 0.5
+  //         ? 'rgba(45, 85, 35, 0.8)'
+  //         : 'rgba(80, 65, 35, 0.7)';
+
+  //     ctx.fill();
+  //   }
+
+  //   ctx.globalCompositeOperation = 'source-over';
+  // }
 
   // --------------------------------
   // Gestion du pointeur
@@ -212,13 +305,17 @@ export class CleaningGame implements AfterViewInit {
   // --------------------------------
 
   private cleanAtPointer(): void {
-    const ctx = this.dirtCtx;
+
+  for (const dirt of this.dirtTypes) {
+
+    const ctx = this.dirtContexts.get(dirt.id);
+
+    if (!ctx) continue;
 
     ctx.save();
 
     ctx.globalCompositeOperation = 'destination-out';
 
-    // Pinceau doux
     const gradient = ctx.createRadialGradient(
       this.pointerX,
       this.pointerY,
@@ -247,88 +344,214 @@ export class CleaningGame implements AfterViewInit {
     ctx.fill();
 
     ctx.restore();
-this.render();
-
-const now = performance.now();
-
-if (now - this.lastProgressUpdate > 150) {
-  this.updateProgress();
-  this.lastProgressUpdate = now;
-}
   }
+
+  this.render();
+
+  const now = performance.now();
+
+  if (now - this.lastProgressUpdate > 150) {
+    this.updateProgress();
+    this.lastProgressUpdate = now;
+  }
+}
+//   private cleanAtPointer(): void {
+//     const ctx = this.dirtCtx;
+
+//     ctx.save();
+
+//     ctx.globalCompositeOperation = 'destination-out';
+
+//     // Pinceau doux
+//     const gradient = ctx.createRadialGradient(
+//       this.pointerX,
+//       this.pointerY,
+//       this.brushSize * 0.2,
+//       this.pointerX,
+//       this.pointerY,
+//       this.brushSize
+//     );
+
+//     gradient.addColorStop(0, 'rgba(0,0,0,1)');
+//     gradient.addColorStop(0.7, 'rgba(0,0,0,0.85)');
+//     gradient.addColorStop(1, 'rgba(0,0,0,0)');
+
+//     ctx.fillStyle = gradient;
+
+//     ctx.beginPath();
+
+//     ctx.arc(
+//       this.pointerX,
+//       this.pointerY,
+//       this.brushSize,
+//       0,
+//       Math.PI * 2
+//     );
+
+//     ctx.fill();
+
+//     ctx.restore();
+// this.render();
+
+// const now = performance.now();
+
+// if (now - this.lastProgressUpdate > 150) {
+//   this.updateProgress();
+//   this.lastProgressUpdate = now;
+// }
+//   }
 
   // --------------------------------
   // Rendu
   // --------------------------------
 
   private render(): void {
-    if (!this.ctx) return;
 
-    this.ctx.clearRect(
-      0,
-      0,
-      this.WIDTH,
-      this.HEIGHT
-    );
+  if (!this.ctx) return;
 
-    // Surface propre
-    this.ctx.drawImage(this.cleanLayer, 0, 0);
+  this.ctx.clearRect(
+    0,
+    0,
+    this.WIDTH,
+    this.HEIGHT
+  );
 
-    // Couche sale
-    this.ctx.drawImage(this.dirtLayer, 0, 0);
+  // 1. Surface propre
+  this.ctx.drawImage(this.cleanLayer, 0, 0);
 
-    // Indicateur du pinceau
-    if (this.pointerInside) {
+  // 2. Toutes les couches de salissures
+  for (const dirt of this.dirtTypes) {
 
-      this.ctx.beginPath();
+    const layer = this.dirtLayers.get(dirt.id);
 
-      this.ctx.arc(
-        this.pointerX,
-        this.pointerY,
-        this.brushSize,
-        0,
-        Math.PI * 2
-      );
-
-      this.ctx.strokeStyle = '#ffffff';
-      this.ctx.lineWidth = 2;
-      this.ctx.stroke();
-
-      this.ctx.beginPath();
-
-      this.ctx.arc(
-        this.pointerX,
-        this.pointerY,
-        3,
-        0,
-        Math.PI * 2
-      );
-
-      this.ctx.fillStyle = '#ffffff';
-      this.ctx.fill();
+    if (layer) {
+      this.ctx.drawImage(layer, 0, 0);
     }
   }
+
+  // 3. Curseur de nettoyage
+  if (this.pointerInside) {
+
+    this.ctx.beginPath();
+
+    this.ctx.arc(
+      this.pointerX,
+      this.pointerY,
+      this.brushSize,
+      0,
+      Math.PI * 2
+    );
+
+    this.ctx.strokeStyle = '#ffffff';
+    this.ctx.lineWidth = 2;
+    this.ctx.stroke();
+
+    this.ctx.beginPath();
+
+    this.ctx.arc(
+      this.pointerX,
+      this.pointerY,
+      3,
+      0,
+      Math.PI * 2
+    );
+
+    this.ctx.fillStyle = '#ffffff';
+    this.ctx.fill();
+  }
+}
+  // private render(): void {
+  //   if (!this.ctx) return;
+
+  //   this.ctx.clearRect(
+  //     0,
+  //     0,
+  //     this.WIDTH,
+  //     this.HEIGHT
+  //   );
+
+  //   // Surface propre
+  //   this.ctx.drawImage(this.cleanLayer, 0, 0);
+
+  //   // Couche sale
+  //   this.ctx.drawImage(this.dirtLayer, 0, 0);
+
+  //   // Indicateur du pinceau
+  //   if (this.pointerInside) {
+
+  //     this.ctx.beginPath();
+
+  //     this.ctx.arc(
+  //       this.pointerX,
+  //       this.pointerY,
+  //       this.brushSize,
+  //       0,
+  //       Math.PI * 2
+  //     );
+
+  //     this.ctx.strokeStyle = '#ffffff';
+  //     this.ctx.lineWidth = 2;
+  //     this.ctx.stroke();
+
+  //     this.ctx.beginPath();
+
+  //     this.ctx.arc(
+  //       this.pointerX,
+  //       this.pointerY,
+  //       3,
+  //       0,
+  //       Math.PI * 2
+  //     );
+
+  //     this.ctx.fillStyle = '#ffffff';
+  //     this.ctx.fill();
+  //   }
+  // }
 
   // --------------------------------
   // Calcul de progression
   // --------------------------------
 
   private calculateDirt(): number {
-    const image = this.dirtCtx.getImageData(
+
+  let total = 0;
+
+  for (const dirt of this.dirtTypes) {
+
+    const ctx = this.dirtContexts.get(dirt.id);
+
+    if (!ctx) continue;
+
+    const image = ctx.getImageData(
       0,
       0,
       this.WIDTH,
       this.HEIGHT
     );
 
-    let total = 0;
-
     for (let i = 3; i < image.data.length; i += 4) {
       total += image.data[i];
     }
-
-    return total;
   }
+
+  return total;
+}
+  // private calculateDirt(): number {
+  //   const image = this.dirtCtx.getImageData(
+  //     0,
+  //     0,
+  //     this.WIDTH,
+  //     this.HEIGHT
+  //   );
+
+  //   let total = 0;
+
+  //   for (let i = 3; i < image.data.length; i += 4) {
+  //     total += image.data[i];
+  //   }
+
+  //   return total;
+  // }
 
   private updateProgress(): void {
     if (!this.initialDirt) return;
@@ -349,11 +572,21 @@ if (now - this.lastProgressUpdate > 150) {
   // --------------------------------
 
   resetGame(): void {
-    this.generateDirtySurface();
 
-    this.initialDirt = this.calculateDirt();
-    this.progress = 0;
+  this.generateDirtySurfaces();
 
-    this.render();
-  }
+  this.initialDirt = this.calculateDirt();
+
+  this.progress = 0;
+
+  this.render();
+}
+  // resetGame(): void {
+  //   this.generateDirtySurface();
+
+  //   this.initialDirt = this.calculateDirt();
+  //   this.progress = 0;
+
+  //   this.render();
+  // }
 }
