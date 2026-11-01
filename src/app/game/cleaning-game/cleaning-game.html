@@ -1,53 +1,101 @@
+    <!-- Sélection de la carte actuellement jouée -->
+<div class="map-selector">
+
+  <label for="map-select">Carte :</label>
+
+  <select
+    id="map-select"
+    [value]="activeMap.id"
+    (change)="selectMap($any($event.target).value)"
+  >
+    @for (map of maps; track map.id) {
+      <option [value]="map.id">
+        {{ map.name }}
+      </option>
+    }
+  </select>
+
+</div>
+
 <div class="game-container">
 
-  <header class="game-header">
-    <div>
-      <h1>Cleaning Simulator</h1>
-      <span>Mission : Nettoyer la cour</span>
+    <header class="game-header">
+        <div>
+            <h1>Cleaning Simulator</h1>
+            <span>Mission : Nettoyer la cour</span>
+        </div>
+
+        <div class="progress-info">
+            <strong>{{ progress.toFixed(0) }} %</strong>
+            <span>Surface nettoyée</span>
+        </div>
+    </header>
+
+    <div class="progress-track">
+        <div class="progress-fill" [style.width.%]="progress">
+        </div>
     </div>
 
-    <div class="progress-info">
-      <strong>{{ progress.toFixed(0) }} %</strong>
-      <span>Surface nettoyée</span>
-    </div>
-  </header>
+    <div class="game-area">
 
-  <div class="progress-track">
-    <div
-      class="progress-fill"
-      [style.width.%]="progress">
-    </div>
-  </div>
+        <canvas #gameCanvas class="game-canvas" (pointerdown)="onPointerDown($event)"
+            (pointermove)="onPointerMove($event)" (pointerup)="onPointerUp()" (pointercancel)="onPointerUp()"
+            (pointerenter)="onPointerEnter($event)" (pointerleave)="onPointerLeave()">
+        </canvas>
 
-  <div class="game-area">
+        <div class="dirt-types">
 
-    <canvas
-      #gameCanvas
-      class="game-canvas"
-      (pointerdown)="onPointerDown($event)"
-      (pointermove)="onPointerMove($event)"
-      (pointerup)="onPointerUp()"
-      (pointercancel)="onPointerUp()"
-      (pointerenter)="onPointerEnter($event)"
-      (pointerleave)="onPointerLeave()">
-    </canvas>
+            @for (dirt of dirtTypes; track dirt.id) {
+            <div class="dirt-type">
+                <span class="color-preview" [style.background]="dirt.color">
+                </span>
 
-  </div>
+                <strong>{{ dirt.name }}</strong>
 
-  <footer class="game-footer">
+                <small>Résistance : {{ dirt.resistance }}</small>
+            </div>
+            }
 
-    <div class="tool-info">
-      <span class="tool-icon">🧽</span>
-      <div>
-        <strong>Éponge basique</strong>
-        <small>Rayon : 38 px</small>
-      </div>
-    </div>
+        </div>
 
-    <button (click)="resetGame()">
-      Recommencer
+        <!-- Sélection des outils disponibles -->
+<div class="tool-selector">
+
+  @for (tool of tools; track tool.id) {
+
+    <button
+      type="button"
+      [class.active]="activeTool.id === tool.id"
+      (click)="selectTool(tool.id)"
+    >
+      {{ tool.name }}
+
+      <small>
+        Rayon : {{ tool.radius }} px
+      </small>
+
     </button>
 
-  </footer>
+  }
+
+</div>
+
+    </div>
+
+    <footer class="game-footer">
+
+        <div class="tool-info">
+            <span class="tool-icon">🧽</span>
+            <div>
+                <strong>{{ activeTool.name }}</strong>
+                <small>Rayon : {{ activeTool.radius }} px</small>
+            </div>
+        </div>
+
+        <button (click)="resetGame()">
+            Recommencer
+        </button>
+
+    </footer>
 
 </div>

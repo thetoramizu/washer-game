@@ -4,8 +4,12 @@ import {
   Component,
   ElementRef,
   ViewChild,
-  ChangeDetectionStrategy
 } from '@angular/core';
+import { DIRT_TYPES } from '../models/dirt-types.data';
+import { CLEANING_TOOLS } from '../models/cleaning-tools.data';
+import { DirtEngine } from './engine/dirt-engine/dirt-engine';
+import { GameMap } from '../models/game-map';
+import { GAME_MAPS } from '../models/game-maps.data';
 
 @Component({
   imports: [],
@@ -18,26 +22,70 @@ export class CleaningGame implements AfterViewInit {
   @ViewChild('gameCanvas')
   canvasRef!: ElementRef<HTMLCanvasElement>;
 
-  private readonly WIDTH = 800;
-  private readonly HEIGHT = 500;
+  dirtTypes = DIRT_TYPES;
+
+  // Catalogue des cartes disponibles.
+  readonly maps = GAME_MAPS;
+
+  // Carte actuellement sélectionnée.
+  activeMap: GameMap = GAME_MAPS[0];
+
+  // Dimensions de la carte actuellement chargée.
+  private get WIDTH(): number {
+    return this.activeMap.width;
+  }
+
+  private get HEIGHT(): number {
+    return this.activeMap.height;
+  }
+
+  // private readonly WIDTH = 800;
+  // private readonly HEIGHT = 500;
 
   private canvas!: HTMLCanvasElement;
   private ctx!: CanvasRenderingContext2D;
 
-  private cleanLayer!: HTMLCanvasElement;
-  private dirtLayer!: HTMLCanvasElement;
+  // Moteur indépendant qui gère toutes les salissures.
+  private dirtEngine!: DirtEngine;
 
+  // Image de référence de la surface propre.
+  // Elle ne sera générée qu'une seule fois.
+  private cleanImage!: ImageData;
+
+  // Catalogue des outils disponibles.
+  readonly tools = CLEANING_TOOLS;
+
+  // Outil actuellement utilisé.
+  // Pour le moment, on utilise uniquement l'éponge.
+  activeTool = CLEANING_TOOLS[0];
+
+  // Temps du dernier nettoyage, pour calculer le deltaTime.
+  private lastCleanTime = 0;
+
+  // Contexte utilisé uniquement pour générer la surface propre.
   private cleanCtx!: CanvasRenderingContext2D;
-  private dirtCtx!: CanvasRenderingContext2D;
+
+  // private cleanLayer!: HTMLCanvasElement;
+  // // Toutes les couches de salissures
+  // private dirtLayers: Map<
+  //   string,
+  //   HTMLCanvasElement
+  // > = new Map();
+
+  // private cleanCtx!: CanvasRenderingContext2D;
+  // private dirtContexts: Map<
+  //   string,
+  //   CanvasRenderingContext2D
+  // > = new Map();
 
   private isCleaning = false;
   private pointerX = -100;
   private pointerY = -100;
   private pointerInside = false;
 
-  private brushSize = 38;
+  // private brushSize = 38;
 
-  private initialDirt = 0;
+  // private initialDirt = 0;
   progress = 0;
 
   private lastProgressUpdate = 0;
@@ -48,6 +96,7 @@ export class CleaningGame implements AfterViewInit {
   }
 
   private initializeGame(): void {
+
     this.canvas = this.canvasRef.nativeElement;
 
     this.canvas.width = this.WIDTH;
@@ -55,30 +104,95 @@ export class CleaningGame implements AfterViewInit {
 
     this.ctx = this.canvas.getContext('2d')!;
 
-    // Création des couches indépendantes
-    this.cleanLayer = document.createElement('canvas');
-    this.dirtLayer = document.createElement('canvas');
+    // Génère la surface propre qui servira de fond.
+    const cleanCanvas = document.createElement('canvas');
 
-    this.cleanLayer.width = this.WIDTH;
-    this.cleanLayer.height = this.HEIGHT;
+    cleanCanvas.width = this.WIDTH;
+    cleanCanvas.height = this.HEIGHT;
 
-    this.dirtLayer.width = this.WIDTH;
-    this.dirtLayer.height = this.HEIGHT;
+    const cleanContext = cleanCanvas.getContext('2d')!;
 
-    this.cleanCtx = this.cleanLayer.getContext('2d')!;
+    if (!cleanContext) return;
 
-    this.dirtCtx = this.dirtLayer.getContext(
-      '2d',
-      { willReadFrequently: true }
-    )!;
-
+    // Génération de la texture de fond.
+    this.cleanCtx = cleanContext;
     this.generateCleanSurface();
-    this.generateDirtySurface();
 
-    this.initialDirt = this.calculateDirt();
+    // Conserve une copie de la surface propre.
+    this.cleanImage = cleanContext.getImageData(
+      0,
+      0,
+      this.WIDTH,
+      this.HEIGHT
+    );
 
+    /**
+     * Récupère uniquement les salissures autorisées
+     * sur la carte actuellement sélectionnée.
+     */
+    const mapDirtTypes = this.dirtTypes.filter(
+      dirt => this.activeMap.dirtDensity[dirt.id] !== undefined
+    );
+
+    /**
+     * Crée le moteur avec les dimensions et les salissures
+     * propres à cette carte.
+     */
+    this.dirtEngine = new DirtEngine(
+      this.WIDTH,
+      this.HEIGHT,
+      mapDirtTypes
+    );
+
+    /**
+     * Génère les salissures selon la densité configurée
+     * dans le catalogue de cartes.
+     */
+    this.dirtEngine.generate(
+      this.activeMap.dirtDensity
+    );
+
+    // Affichage initial.
     this.render();
+
+    this.updateProgress();
   }
+  // private initializeGame(): void {
+  //   this.canvas = this.canvasRef.nativeElement;
+
+  //   this.canvas.width = this.WIDTH;
+  //   this.canvas.height = this.HEIGHT;
+
+  //   this.ctx = this.canvas.getContext('2d')!;
+
+  //   // Création de la surface propre
+  //   this.cleanLayer = document.createElement('canvas');
+  //   this.cleanLayer.width = this.WIDTH;
+  //   this.cleanLayer.height = this.HEIGHT;
+
+  //   this.cleanCtx = this.cleanLayer.getContext('2d')!;
+
+  //   // Création des différentes couches sales
+  //   for (const dirt of this.dirtTypes) {
+
+  //     const layer = document.createElement('canvas');
+
+  //     layer.width = this.WIDTH;
+  //     layer.height = this.HEIGHT;
+
+  //     const context = layer.getContext('2d')!;
+
+  //     this.dirtLayers.set(dirt.id, layer);
+  //     this.dirtContexts.set(dirt.id, context);
+  //   }
+
+  //   this.generateCleanSurface();
+  //   this.generateDirtySurfaces();
+
+  //   this.initialDirt = this.calculateDirt();
+
+  //   this.render();
+  // }
 
   // --------------------------------
   // Génération de la surface propre
@@ -121,40 +235,53 @@ export class CleaningGame implements AfterViewInit {
     }
   }
 
-  // --------------------------------
-  // Génération de la salissure
-  // --------------------------------
+  // // --------------------------------
+  // // Génération de la salissure
+  // // --------------------------------
 
-  private generateDirtySurface(): void {
-    const ctx = this.dirtCtx;
+  // private generateDirtySurfaces(): void {
 
-    ctx.globalCompositeOperation = 'source-over';
+  //   for (const dirt of this.dirtTypes) {
 
-    // Couche générale de saleté
-    ctx.fillStyle = '#514d32';
-    ctx.fillRect(0, 0, this.WIDTH, this.HEIGHT);
+  //     const ctx = this.dirtContexts.get(dirt.id);
 
-    // Taches de mousse et de moisissure
-    for (let i = 0; i < 250; i++) {
+  //     if (!ctx) continue;
 
-      const x = Math.random() * this.WIDTH;
-      const y = Math.random() * this.HEIGHT;
+  //     ctx.clearRect(
+  //       0,
+  //       0,
+  //       this.WIDTH,
+  //       this.HEIGHT
+  //     );
 
-      const radius = 5 + Math.random() * 35;
+  //     // Chaque salissure possède sa propre apparence
+  //     for (let i = 0; i < 90; i++) {
 
-      ctx.beginPath();
-      ctx.arc(x, y, radius, 0, Math.PI * 2);
+  //       const x = Math.random() * this.WIDTH;
+  //       const y = Math.random() * this.HEIGHT;
 
-      ctx.fillStyle =
-        Math.random() > 0.5
-          ? 'rgba(45, 85, 35, 0.8)'
-          : 'rgba(80, 65, 35, 0.7)';
+  //       const radius = 8 + Math.random() * 35;
 
-      ctx.fill();
-    }
+  //       ctx.beginPath();
 
-    ctx.globalCompositeOperation = 'source-over';
-  }
+  //       ctx.arc(
+  //         x,
+  //         y,
+  //         radius,
+  //         0,
+  //         Math.PI * 2
+  //       );
+
+  //       ctx.fillStyle = dirt.color;
+  //       ctx.globalAlpha = 0.65 + Math.random() * 0.35;
+
+  //       ctx.fill();
+  //     }
+
+  //     ctx.globalAlpha = 1;
+  //   }
+  // }
+
 
   // --------------------------------
   // Gestion du pointeur
@@ -162,9 +289,8 @@ export class CleaningGame implements AfterViewInit {
 
   onPointerDown(event: PointerEvent): void {
     this.isCleaning = true;
-
+    this.lastCleanTime = 0;
     this.canvas.setPointerCapture(event.pointerId);
-
     this.updatePointerPosition(event);
     this.cleanAtPointer();
   }
@@ -181,6 +307,7 @@ export class CleaningGame implements AfterViewInit {
 
   onPointerUp(): void {
     this.isCleaning = false;
+    this.lastCleanTime = 0;
     this.updateProgress();
   }
 
@@ -211,73 +338,119 @@ export class CleaningGame implements AfterViewInit {
   // Nettoyage
   // --------------------------------
 
+  /**
+ * Demande au moteur de nettoyer la position actuelle
+ * avec l'outil sélectionné.
+ */
   private cleanAtPointer(): void {
-    const ctx = this.dirtCtx;
 
-    ctx.save();
+    const now = performance.now();
 
-    ctx.globalCompositeOperation = 'destination-out';
+    // Calcule le temps écoulé depuis le dernier nettoyage.
+    // On limite le delta pour éviter les gros sauts.
+    const deltaTime = this.lastCleanTime === 0
+      ? 1 / 60
+      : Math.min((now - this.lastCleanTime) / 1000, 0.05);
 
-    // Pinceau doux
-    const gradient = ctx.createRadialGradient(
+    this.lastCleanTime = now;
+
+    // Le moteur s'occupe de toutes les règles de nettoyage.
+    const result = this.dirtEngine.cleanAt(
       this.pointerX,
       this.pointerY,
-      this.brushSize * 0.2,
-      this.pointerX,
-      this.pointerY,
-      this.brushSize
+      this.activeTool,
+      deltaTime
     );
 
-    gradient.addColorStop(0, 'rgba(0,0,0,1)');
-    gradient.addColorStop(0.7, 'rgba(0,0,0,0.85)');
-    gradient.addColorStop(1, 'rgba(0,0,0,0)');
+    // On actualise le rendu uniquement si quelque chose a changé.
+    if (result.changed) {
+      this.render();
+    }
 
-    ctx.fillStyle = gradient;
+    // Actualisation périodique de la progression.
+    if (now - this.lastProgressUpdate > 150) {
 
-    ctx.beginPath();
+      this.updateProgress();
 
-    ctx.arc(
-      this.pointerX,
-      this.pointerY,
-      this.brushSize,
-      0,
-      Math.PI * 2
-    );
-
-    ctx.fill();
-
-    ctx.restore();
-this.render();
-
-const now = performance.now();
-
-if (now - this.lastProgressUpdate > 150) {
-  this.updateProgress();
-  this.lastProgressUpdate = now;
-}
+      this.lastProgressUpdate = now;
+    }
   }
+  // private cleanAtPointer(): void {
+
+  //   for (const dirt of this.dirtTypes) {
+
+  //     const ctx = this.dirtContexts.get(dirt.id);
+
+  //     if (!ctx) continue;
+
+  //     ctx.save();
+
+  //     ctx.globalCompositeOperation = 'destination-out';
+
+  //     const gradient = ctx.createRadialGradient(
+  //       this.pointerX,
+  //       this.pointerY,
+  //       this.brushSize * 0.2,
+  //       this.pointerX,
+  //       this.pointerY,
+  //       this.brushSize
+  //     );
+
+  //     gradient.addColorStop(0, 'rgba(0,0,0,1)');
+  //     gradient.addColorStop(0.7, 'rgba(0,0,0,0.85)');
+  //     gradient.addColorStop(1, 'rgba(0,0,0,0)');
+
+  //     ctx.fillStyle = gradient;
+
+  //     ctx.beginPath();
+
+  //     ctx.arc(
+  //       this.pointerX,
+  //       this.pointerY,
+  //       this.brushSize,
+  //       0,
+  //       Math.PI * 2
+  //     );
+
+  //     ctx.fill();
+
+  //     ctx.restore();
+  //   }
+
+  //   this.render();
+
+  //   const now = performance.now();
+
+  //   if (now - this.lastProgressUpdate > 150) {
+  //     this.updateProgress();
+  //     this.lastProgressUpdate = now;
+  //   }
+  // }
+
 
   // --------------------------------
   // Rendu
   // --------------------------------
 
+  /**
+ * Dessine la carte complète.
+ *
+ * Le moteur compose les salissures sur la surface propre.
+ * Le composant ajoute ensuite le curseur.
+ */
   private render(): void {
-    if (!this.ctx) return;
 
-    this.ctx.clearRect(
-      0,
-      0,
-      this.WIDTH,
-      this.HEIGHT
+    if (!this.ctx || !this.dirtEngine || !this.cleanImage) {
+      return;
+    }
+
+    // Le moteur génère l'image finale de la carte.
+    this.dirtEngine.render(
+      this.ctx,
+      this.cleanImage
     );
 
-    // Surface propre
-    this.ctx.drawImage(this.cleanLayer, 0, 0);
-
-    // Couche sale
-    this.ctx.drawImage(this.dirtLayer, 0, 0);
-
-    // Indicateur du pinceau
+    // Affichage du curseur de nettoyage.
     if (this.pointerInside) {
 
       this.ctx.beginPath();
@@ -285,7 +458,7 @@ if (now - this.lastProgressUpdate > 150) {
       this.ctx.arc(
         this.pointerX,
         this.pointerY,
-        this.brushSize,
+        this.activeTool.radius,
         0,
         Math.PI * 2
       );
@@ -294,6 +467,7 @@ if (now - this.lastProgressUpdate > 150) {
       this.ctx.lineWidth = 2;
       this.ctx.stroke();
 
+      // Petit point central.
       this.ctx.beginPath();
 
       this.ctx.arc(
@@ -309,51 +483,202 @@ if (now - this.lastProgressUpdate > 150) {
     }
   }
 
+  // private render(): void {
+
+  //   if (!this.ctx) return;
+
+  //   this.ctx.clearRect(
+  //     0,
+  //     0,
+  //     this.WIDTH,
+  //     this.HEIGHT
+  //   );
+
+  //   // 1. Surface propre
+  //   this.ctx.drawImage(this.cleanLayer, 0, 0);
+
+  //   // 2. Toutes les couches de salissures
+  //   for (const dirt of this.dirtTypes) {
+
+  //     const layer = this.dirtLayers.get(dirt.id);
+
+  //     if (layer) {
+  //       this.ctx.drawImage(layer, 0, 0);
+  //     }
+  //   }
+
+  //   // 3. Curseur de nettoyage
+  //   if (this.pointerInside) {
+
+  //     this.ctx.beginPath();
+
+  //     this.ctx.arc(
+  //       this.pointerX,
+  //       this.pointerY,
+  //       this.brushSize,
+  //       0,
+  //       Math.PI * 2
+  //     );
+
+  //     this.ctx.strokeStyle = '#ffffff';
+  //     this.ctx.lineWidth = 2;
+  //     this.ctx.stroke();
+
+  //     this.ctx.beginPath();
+
+  //     this.ctx.arc(
+  //       this.pointerX,
+  //       this.pointerY,
+  //       3,
+  //       0,
+  //       Math.PI * 2
+  //     );
+
+  //     this.ctx.fillStyle = '#ffffff';
+  //     this.ctx.fill();
+  //   }
+  // }
+
   // --------------------------------
   // Calcul de progression
   // --------------------------------
 
-  private calculateDirt(): number {
-    const image = this.dirtCtx.getImageData(
-      0,
-      0,
-      this.WIDTH,
-      this.HEIGHT
-    );
-
-    let total = 0;
-
-    for (let i = 3; i < image.data.length; i += 4) {
-      total += image.data[i];
-    }
-
-    return total;
-  }
-
+  /**
+ * Récupère directement la progression calculée par le moteur.
+ */
   private updateProgress(): void {
-    if (!this.initialDirt) return;
 
-    const remaining = this.calculateDirt();
+    if (!this.dirtEngine) return;
 
-    this.progress = Math.min(
-      100,
-      Math.max(
-        0,
-        (1 - remaining / this.initialDirt) * 100
-      )
-    );
+    this.progress = this.dirtEngine.getProgress();
   }
+
+  // private calculateDirt(): number {
+
+  //   let total = 0;
+
+  //   for (const dirt of this.dirtTypes) {
+
+  //     const ctx = this.dirtContexts.get(dirt.id);
+
+  //     if (!ctx) continue;
+
+  //     const image = ctx.getImageData(
+  //       0,
+  //       0,
+  //       this.WIDTH,
+  //       this.HEIGHT
+  //     );
+
+  //     for (let i = 3; i < image.data.length; i += 4) {
+  //       total += image.data[i];
+  //     }
+  //   }
+
+  //   return total;
+  // }
+
+  // private updateProgress(): void {
+  //   if (!this.initialDirt) return;
+
+  //   const remaining = this.calculateDirt();
+
+  //   this.progress = Math.min(
+  //     100,
+  //     Math.max(
+  //       0,
+  //       (1 - remaining / this.initialDirt) * 100
+  //     )
+  //   );
+  // }
 
   // --------------------------------
   // Réinitialisation
   // --------------------------------
 
+  /**
+ * Génère une nouvelle carte avec des salissures fraîches.
+ */
   resetGame(): void {
-    this.generateDirtySurface();
 
-    this.initialDirt = this.calculateDirt();
+    // Régénère la carte avec ses propres paramètres.
+    this.dirtEngine.generate(
+      this.activeMap.dirtDensity
+    );
     this.progress = 0;
 
+    this.lastCleanTime = 0;
+
+    this.render();
+
+    this.updateProgress();
+  }
+  // resetGame(): void {
+
+  //   this.generateDirtySurfaces();
+
+  //   this.initialDirt = this.calculateDirt();
+
+  //   this.progress = 0;
+
+  //   this.render();
+  // }
+
+
+  /**
+ * Sélectionne un outil parmi ceux disponibles.
+ */
+  selectTool(toolId: string): void {
+
+    const tool = this.tools.find(
+      item => item.id === toolId
+    );
+
+    // Ignore les identifiants inconnus.
+    if (!tool) return;
+
+    this.activeTool = tool;
+
+    // Réinitialise le chronomètre pour éviter
+    // un deltaTime trop important lors du changement.
+    this.lastCleanTime = 0;
+
+    // Actualise le curseur pour afficher le nouveau rayon.
     this.render();
   }
+
+  /**
+   * Charge une nouvelle carte à partir de son identifiant.
+   *
+   * L'ancien moteur est remplacé par un nouveau moteur
+   * configuré avec les paramètres de la nouvelle carte.
+   */
+  selectMap(mapId: string): void {
+
+    const selectedMap = this.maps.find(
+      map => map.id === mapId
+    );
+
+    // Ignore les identifiants inconnus.
+    if (!selectedMap) return;
+
+    this.activeMap = selectedMap;
+
+    // Arrête toute opération de nettoyage en cours.
+    this.isCleaning = false;
+    this.lastCleanTime = 0;
+
+    // Réinitialise le pointeur.
+    this.pointerX = -100;
+    this.pointerY = -100;
+    this.pointerInside = false;
+
+    // Reconstruit le moteur et les Canvas
+    // avec les dimensions de la nouvelle carte.
+    this.initializeGame();
+
+    // La nouvelle carte commence à 0 %.
+    this.progress = 0;
+  }
+
 }
