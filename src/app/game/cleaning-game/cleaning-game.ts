@@ -3,16 +3,22 @@ import {
   AfterViewInit,
   Component,
   ElementRef,
+  inject,
   ViewChild,
 } from '@angular/core';
 import { DIRT_TYPES } from '../models/dirt-types.data';
-import { CLEANING_TOOLS } from '../models/cleaning-tools.data';
 import { DirtEngine } from './engine/dirt-engine/dirt-engine';
 import { GameMap } from '../models/game-map';
 import { GAME_MAPS } from '../models/game-maps.data';
+import { GamingState } from '../services/gaming-state';
+import { MainMenu } from './components/main-menu/main-menu';
+import { MapSelection } from './components/map-selection/map-selection';
+import { CleaningTool } from '../models/cleaning-tool';
+import { GameScreen } from './components/game-screen/game-screen';
+import { Shop } from './components/shop/shop';
 
 @Component({
-  imports: [],
+  imports: [MainMenu, MapSelection, Shop, GameScreen],
   selector: 'app-cleaning-game',
   styleUrl: './cleaning-game.scss',
   templateUrl: './cleaning-game.html',
@@ -21,6 +27,8 @@ export class CleaningGame implements AfterViewInit {
 
   @ViewChild('gameCanvas')
   canvasRef!: ElementRef<HTMLCanvasElement>;
+
+  readonly gamingState = inject(GamingState);
 
   dirtTypes = DIRT_TYPES;
 
@@ -39,9 +47,6 @@ export class CleaningGame implements AfterViewInit {
     return this.activeMap.height;
   }
 
-  // private readonly WIDTH = 800;
-  // private readonly HEIGHT = 500;
-
   private canvas!: HTMLCanvasElement;
   private ctx!: CanvasRenderingContext2D;
 
@@ -52,12 +57,12 @@ export class CleaningGame implements AfterViewInit {
   // Elle ne sera générée qu'une seule fois.
   private cleanImage!: ImageData;
 
-  // Catalogue des outils disponibles.
-  readonly tools = CLEANING_TOOLS;
+  // // Catalogue des outils disponibles.
+  // readonly tools = CLEANING_TOOLS;
 
-  // Outil actuellement utilisé.
-  // Pour le moment, on utilise uniquement l'éponge.
-  activeTool = CLEANING_TOOLS[0];
+  // // Outil actuellement utilisé.
+  // // Pour le moment, on utilise uniquement l'éponge.
+  // activeTool = CLEANING_TOOLS[0];
 
   // Temps du dernier nettoyage, pour calculer le deltaTime.
   private lastCleanTime = 0;
@@ -65,35 +70,26 @@ export class CleaningGame implements AfterViewInit {
   // Contexte utilisé uniquement pour générer la surface propre.
   private cleanCtx!: CanvasRenderingContext2D;
 
-  // private cleanLayer!: HTMLCanvasElement;
-  // // Toutes les couches de salissures
-  // private dirtLayers: Map<
-  //   string,
-  //   HTMLCanvasElement
-  // > = new Map();
-
-  // private cleanCtx!: CanvasRenderingContext2D;
-  // private dirtContexts: Map<
-  //   string,
-  //   CanvasRenderingContext2D
-  // > = new Map();
-
   private isCleaning = false;
   private pointerX = -100;
   private pointerY = -100;
   private pointerInside = false;
 
-  // private brushSize = 38;
-
-  // private initialDirt = 0;
   progress = 0;
 
   private lastProgressUpdate = 0;
 
+  public gameState: GamingState = inject(GamingState);
 
   ngAfterViewInit(): void {
-    this.initializeGame();
+
+    // Le Canvas n'existe pas encore dans le DOM
+    // lorsque le joueur est dans un autre écran.
+    // L'initialisation sera effectuée au lancement d'une partie.
+
   }
+
+  
 
   private initializeGame(): void {
 
@@ -157,42 +153,6 @@ export class CleaningGame implements AfterViewInit {
 
     this.updateProgress();
   }
-  // private initializeGame(): void {
-  //   this.canvas = this.canvasRef.nativeElement;
-
-  //   this.canvas.width = this.WIDTH;
-  //   this.canvas.height = this.HEIGHT;
-
-  //   this.ctx = this.canvas.getContext('2d')!;
-
-  //   // Création de la surface propre
-  //   this.cleanLayer = document.createElement('canvas');
-  //   this.cleanLayer.width = this.WIDTH;
-  //   this.cleanLayer.height = this.HEIGHT;
-
-  //   this.cleanCtx = this.cleanLayer.getContext('2d')!;
-
-  //   // Création des différentes couches sales
-  //   for (const dirt of this.dirtTypes) {
-
-  //     const layer = document.createElement('canvas');
-
-  //     layer.width = this.WIDTH;
-  //     layer.height = this.HEIGHT;
-
-  //     const context = layer.getContext('2d')!;
-
-  //     this.dirtLayers.set(dirt.id, layer);
-  //     this.dirtContexts.set(dirt.id, context);
-  //   }
-
-  //   this.generateCleanSurface();
-  //   this.generateDirtySurfaces();
-
-  //   this.initialDirt = this.calculateDirt();
-
-  //   this.render();
-  // }
 
   // --------------------------------
   // Génération de la surface propre
@@ -234,54 +194,6 @@ export class CleaningGame implements AfterViewInit {
       );
     }
   }
-
-  // // --------------------------------
-  // // Génération de la salissure
-  // // --------------------------------
-
-  // private generateDirtySurfaces(): void {
-
-  //   for (const dirt of this.dirtTypes) {
-
-  //     const ctx = this.dirtContexts.get(dirt.id);
-
-  //     if (!ctx) continue;
-
-  //     ctx.clearRect(
-  //       0,
-  //       0,
-  //       this.WIDTH,
-  //       this.HEIGHT
-  //     );
-
-  //     // Chaque salissure possède sa propre apparence
-  //     for (let i = 0; i < 90; i++) {
-
-  //       const x = Math.random() * this.WIDTH;
-  //       const y = Math.random() * this.HEIGHT;
-
-  //       const radius = 8 + Math.random() * 35;
-
-  //       ctx.beginPath();
-
-  //       ctx.arc(
-  //         x,
-  //         y,
-  //         radius,
-  //         0,
-  //         Math.PI * 2
-  //       );
-
-  //       ctx.fillStyle = dirt.color;
-  //       ctx.globalAlpha = 0.65 + Math.random() * 0.35;
-
-  //       ctx.fill();
-  //     }
-
-  //     ctx.globalAlpha = 1;
-  //   }
-  // }
-
 
   // --------------------------------
   // Gestion du pointeur
@@ -342,91 +254,83 @@ export class CleaningGame implements AfterViewInit {
  * Demande au moteur de nettoyer la position actuelle
  * avec l'outil sélectionné.
  */
-  private cleanAtPointer(): void {
 
-    const now = performance.now();
+/**
+ * Demande au moteur de nettoyer la position actuelle
+ * avec l'outil équipé et ses améliorations.
+ */
+private cleanAtPointer(): void {
 
-    // Calcule le temps écoulé depuis le dernier nettoyage.
-    // On limite le delta pour éviter les gros sauts.
-    const deltaTime = this.lastCleanTime === 0
-      ? 1 / 60
-      : Math.min((now - this.lastCleanTime) / 1000, 0.05);
+  // Récupère les caractéristiques actualisées de l'outil.
+  const tool = this.activeTool;
 
-    this.lastCleanTime = now;
+  if (!tool || !this.dirtEngine) return;
 
-    // Le moteur s'occupe de toutes les règles de nettoyage.
-    const result = this.dirtEngine.cleanAt(
-      this.pointerX,
-      this.pointerY,
-      this.activeTool,
-      deltaTime
-    );
+  const now = performance.now();
 
-    // On actualise le rendu uniquement si quelque chose a changé.
-    if (result.changed) {
-      this.render();
-    }
+  // Calcule le temps écoulé depuis le dernier nettoyage.
+  // On limite le delta pour éviter les gros sauts.
+  const deltaTime = this.lastCleanTime === 0
+    ? 1 / 60
+    : Math.min((now - this.lastCleanTime) / 1000, 0.05);
 
-    // Actualisation périodique de la progression.
-    if (now - this.lastProgressUpdate > 150) {
+  this.lastCleanTime = now;
 
-      this.updateProgress();
+  // Le moteur utilise directement les caractéristiques améliorées.
+  const result = this.dirtEngine.cleanAt(
+    this.pointerX,
+    this.pointerY,
+    tool,
+    deltaTime
+  );
 
-      this.lastProgressUpdate = now;
-    }
+  // Actualise le rendu uniquement si quelque chose a changé.
+  if (result.changed) {
+    this.render();
   }
+
+  // Actualisation périodique de la progression.
+  if (now - this.lastProgressUpdate > 150) {
+
+    this.updateProgress();
+
+    this.lastProgressUpdate = now;
+  }
+}
+
   // private cleanAtPointer(): void {
-
-  //   for (const dirt of this.dirtTypes) {
-
-  //     const ctx = this.dirtContexts.get(dirt.id);
-
-  //     if (!ctx) continue;
-
-  //     ctx.save();
-
-  //     ctx.globalCompositeOperation = 'destination-out';
-
-  //     const gradient = ctx.createRadialGradient(
-  //       this.pointerX,
-  //       this.pointerY,
-  //       this.brushSize * 0.2,
-  //       this.pointerX,
-  //       this.pointerY,
-  //       this.brushSize
-  //     );
-
-  //     gradient.addColorStop(0, 'rgba(0,0,0,1)');
-  //     gradient.addColorStop(0.7, 'rgba(0,0,0,0.85)');
-  //     gradient.addColorStop(1, 'rgba(0,0,0,0)');
-
-  //     ctx.fillStyle = gradient;
-
-  //     ctx.beginPath();
-
-  //     ctx.arc(
-  //       this.pointerX,
-  //       this.pointerY,
-  //       this.brushSize,
-  //       0,
-  //       Math.PI * 2
-  //     );
-
-  //     ctx.fill();
-
-  //     ctx.restore();
-  //   }
-
-  //   this.render();
 
   //   const now = performance.now();
 
+  //   // Calcule le temps écoulé depuis le dernier nettoyage.
+  //   // On limite le delta pour éviter les gros sauts.
+  //   const deltaTime = this.lastCleanTime === 0
+  //     ? 1 / 60
+  //     : Math.min((now - this.lastCleanTime) / 1000, 0.05);
+
+  //   this.lastCleanTime = now;
+
+  //   // Le moteur s'occupe de toutes les règles de nettoyage.
+  //   const result = this.dirtEngine.cleanAt(
+  //     this.pointerX,
+  //     this.pointerY,
+  //     this.activeTool,
+  //     deltaTime
+  //   );
+
+  //   // On actualise le rendu uniquement si quelque chose a changé.
+  //   if (result.changed) {
+  //     this.render();
+  //   }
+
+  //   // Actualisation périodique de la progression.
   //   if (now - this.lastProgressUpdate > 150) {
+
   //     this.updateProgress();
+
   //     this.lastProgressUpdate = now;
   //   }
   // }
-
 
   // --------------------------------
   // Rendu
@@ -439,6 +343,40 @@ export class CleaningGame implements AfterViewInit {
  * Le composant ajoute ensuite le curseur.
  */
   private render(): void {
+
+    // Affichage du curseur de nettoyage.
+const tool = this.activeTool;
+
+if (this.pointerInside && tool) {
+
+  this.ctx.beginPath();
+
+  this.ctx.arc(
+    this.pointerX,
+    this.pointerY,
+    tool.radius,
+    0,
+    Math.PI * 2
+  );
+
+  this.ctx.strokeStyle = '#ffffff';
+  this.ctx.lineWidth = 2;
+  this.ctx.stroke();
+
+  // Petit point central.
+  this.ctx.beginPath();
+
+  this.ctx.arc(
+    this.pointerX,
+    this.pointerY,
+    3,
+    0,
+    Math.PI * 2
+  );
+
+  this.ctx.fillStyle = '#ffffff';
+  this.ctx.fill();
+}
 
     if (!this.ctx || !this.dirtEngine || !this.cleanImage) {
       return;
@@ -458,7 +396,7 @@ export class CleaningGame implements AfterViewInit {
       this.ctx.arc(
         this.pointerX,
         this.pointerY,
-        this.activeTool.radius,
+        this.activeTool?.radius ?? 0,
         0,
         Math.PI * 2
       );
@@ -483,61 +421,6 @@ export class CleaningGame implements AfterViewInit {
     }
   }
 
-  // private render(): void {
-
-  //   if (!this.ctx) return;
-
-  //   this.ctx.clearRect(
-  //     0,
-  //     0,
-  //     this.WIDTH,
-  //     this.HEIGHT
-  //   );
-
-  //   // 1. Surface propre
-  //   this.ctx.drawImage(this.cleanLayer, 0, 0);
-
-  //   // 2. Toutes les couches de salissures
-  //   for (const dirt of this.dirtTypes) {
-
-  //     const layer = this.dirtLayers.get(dirt.id);
-
-  //     if (layer) {
-  //       this.ctx.drawImage(layer, 0, 0);
-  //     }
-  //   }
-
-  //   // 3. Curseur de nettoyage
-  //   if (this.pointerInside) {
-
-  //     this.ctx.beginPath();
-
-  //     this.ctx.arc(
-  //       this.pointerX,
-  //       this.pointerY,
-  //       this.brushSize,
-  //       0,
-  //       Math.PI * 2
-  //     );
-
-  //     this.ctx.strokeStyle = '#ffffff';
-  //     this.ctx.lineWidth = 2;
-  //     this.ctx.stroke();
-
-  //     this.ctx.beginPath();
-
-  //     this.ctx.arc(
-  //       this.pointerX,
-  //       this.pointerY,
-  //       3,
-  //       0,
-  //       Math.PI * 2
-  //     );
-
-  //     this.ctx.fillStyle = '#ffffff';
-  //     this.ctx.fill();
-  //   }
-  // }
 
   // --------------------------------
   // Calcul de progression
@@ -553,44 +436,6 @@ export class CleaningGame implements AfterViewInit {
     this.progress = this.dirtEngine.getProgress();
   }
 
-  // private calculateDirt(): number {
-
-  //   let total = 0;
-
-  //   for (const dirt of this.dirtTypes) {
-
-  //     const ctx = this.dirtContexts.get(dirt.id);
-
-  //     if (!ctx) continue;
-
-  //     const image = ctx.getImageData(
-  //       0,
-  //       0,
-  //       this.WIDTH,
-  //       this.HEIGHT
-  //     );
-
-  //     for (let i = 3; i < image.data.length; i += 4) {
-  //       total += image.data[i];
-  //     }
-  //   }
-
-  //   return total;
-  // }
-
-  // private updateProgress(): void {
-  //   if (!this.initialDirt) return;
-
-  //   const remaining = this.calculateDirt();
-
-  //   this.progress = Math.min(
-  //     100,
-  //     Math.max(
-  //       0,
-  //       (1 - remaining / this.initialDirt) * 100
-  //     )
-  //   );
-  // }
 
   // --------------------------------
   // Réinitialisation
@@ -613,39 +458,47 @@ export class CleaningGame implements AfterViewInit {
 
     this.updateProgress();
   }
-  // resetGame(): void {
-
-  //   this.generateDirtySurfaces();
-
-  //   this.initialDirt = this.calculateDirt();
-
-  //   this.progress = 0;
-
-  //   this.render();
-  // }
-
 
   /**
  * Sélectionne un outil parmi ceux disponibles.
  */
-  selectTool(toolId: string): void {
 
-    const tool = this.tools.find(
-      item => item.id === toolId
-    );
+/**
+ * Sélectionne un outil parmi ceux possédés par le joueur.
+ */
+selectTool(toolId: string): void {
 
-    // Ignore les identifiants inconnus.
-    if (!tool) return;
+  // GamingState vérifie que le joueur possède cet outil.
+  const equipped = this.gamingState.equipTool(toolId);
 
-    this.activeTool = tool;
+  if (!equipped) return;
 
-    // Réinitialise le chronomètre pour éviter
-    // un deltaTime trop important lors du changement.
-    this.lastCleanTime = 0;
+  // Réinitialise le chronomètre pour éviter
+  // un deltaTime trop important lors du changement.
+  this.lastCleanTime = 0;
 
-    // Actualise le curseur pour afficher le nouveau rayon.
-    this.render();
-  }
+  // Actualise le curseur avec le nouveau rayon.
+  this.render();
+}
+
+  // selectTool(toolId: string): void {
+
+  //   const tool = this.tools.find(
+  //     item => item.id === toolId
+  //   );
+
+  //   // Ignore les identifiants inconnus.
+  //   if (!tool) return;
+
+  //   this.activeTool = tool;
+
+  //   // Réinitialise le chronomètre pour éviter
+  //   // un deltaTime trop important lors du changement.
+  //   this.lastCleanTime = 0;
+
+  //   // Actualise le curseur pour afficher le nouveau rayon.
+  //   this.render();
+  // }
 
   /**
    * Charge une nouvelle carte à partir de son identifiant.
@@ -680,5 +533,15 @@ export class CleaningGame implements AfterViewInit {
     // La nouvelle carte commence à 0 %.
     this.progress = 0;
   }
+
+  /**
+ * Retourne l'outil équipé avec ses améliorations.
+ *
+ * GamingState calcule les caractéristiques finales
+ * à partir du catalogue et des niveaux achetés.
+ */
+get activeTool(): CleaningTool | undefined {
+  return this.gamingState.getEquippedTool();
+}
 
 }

@@ -1,0 +1,107 @@
+
+<main class="map-selection">
+
+  <header class="page-header">
+
+    <div>
+      <h1>Choisir une carte</h1>
+      <p>Sélectionne ton prochain chantier.</p>
+    </div>
+
+    <div class="money-display">
+      {{ gamingState.money() }} $
+    </div>
+
+  </header>
+
+  <section class="map-grid">
+
+    @for (map of maps; track map.id) {
+
+      <article class="map-card">
+
+        <!-- Illustration provisoire de la carte -->
+        <div
+          class="map-preview"
+          [style.background]="map.previewColor"
+        >
+          <span>{{ map.name }}</span>
+        </div>
+
+        <div class="map-content">
+
+          <h2>{{ map.name }}</h2>
+
+          <span
+            class="difficulty"
+            [class.easy]="map.difficulty === 'easy'"
+            [class.medium]="map.difficulty === 'medium'"
+            [class.hard]="map.difficulty === 'hard'"
+          >
+            {{ getDifficultyLabel(map.difficulty) }}
+          </span>
+
+          <p class="description">
+            {{ map.description }}
+          </p>
+
+          <div class="map-info">
+
+            <span>
+              Dimensions
+            </span>
+
+            <strong>
+              {{ map.width }} × {{ map.height }}
+            </strong>
+
+          </div>
+
+          <div class="map-info">
+
+            <span>
+              Salissures
+            </span>
+
+            <strong>
+              {{ Object.keys(map.dirtDensity).join(', ') }}
+            </strong>
+
+          </div>
+
+          @if (gamingState.isMapUnlocked(map.id)) {
+
+            <button
+              class="play-button"
+              (click)="playMap(map)"
+            >
+              Jouer
+            </button>
+
+          } @else {
+
+            <button
+              class="unlock-button"
+              [disabled]="gamingState.money() < map.unlockPrice"
+              (click)="unlockMap(map)"
+            >
+              Débloquer · {{ map.unlockPrice }} $
+            </button>
+
+          }
+
+        </div>
+
+      </article>
+
+    }
+
+  </section>
+
+  <footer>
+    <button class="back-button" (click)="goBack()">
+      Retour au menu
+    </button>
+  </footer>
+
+</main>

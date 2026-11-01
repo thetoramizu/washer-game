@@ -174,62 +174,6 @@ generate(
   this.initialAmount = this.getRemainingAmount();
 }
 
-  // generate(): void {
-
-  //   const dirtCount = this.dirtTypes.length;
-
-  //   // Réinitialise toutes les quantités.
-  //   for (const layer of this.layers) {
-  //     layer.fill(0);
-  //   }
-
-  //   // Génère des zones de salissures indépendantes.
-  //   for (let dirtIndex = 0; dirtIndex < dirtCount; dirtIndex++) {
-
-  //     const layer = this.layers[dirtIndex];
-
-  //     for (let i = 0; i < 90; i++) {
-
-  //       const centerX = Math.random() * this.width;
-  //       const centerY = Math.random() * this.height;
-
-  //       const radius = 8 + Math.random() * 35;
-
-  //       const minX = Math.max(0, Math.floor(centerX - radius));
-  //       const maxX = Math.min(this.width - 1, Math.ceil(centerX + radius));
-
-  //       const minY = Math.max(0, Math.floor(centerY - radius));
-  //       const maxY = Math.min(this.height - 1, Math.ceil(centerY + radius));
-
-  //       for (let y = minY; y <= maxY; y++) {
-
-  //         for (let x = minX; x <= maxX; x++) {
-
-  //           const dx = x - centerX;
-  //           const dy = y - centerY;
-
-  //           const distance = Math.sqrt(dx * dx + dy * dy);
-
-  //           if (distance <= radius) {
-
-  //             const index = y * this.width + x;
-
-  //             // Les salissures peuvent se superposer.
-  //             layer[index] = 255;
-  //           }
-  //         }
-  //       }
-  //     }
-  //   }
-
-  //   // Attribue un ordre aléatoire à chaque pixel.
-  //   this.generateLayerOrders();
-
-  //   // Mémorise la quantité réelle de salissures générées.
-  //   // Cette valeur devient notre référence de progression.
-  //   this.initialAmount = this.getRemainingAmount();
-  // }
-
   // --------------------------------
   // Ordre des couches par pixel
   // --------------------------------
@@ -287,10 +231,6 @@ generate(
     const maxY = Math.min(this.height - 1, Math.ceil(centerY + radius));
 
     let removed = 0;
-
-    // Nombre de couches réellement présentes au-dessus
-    // de la couche actuellement traitée.
-    let activeDepth = 0;
 
     const dirtCount = this.dirtTypes.length;
 
@@ -370,64 +310,6 @@ generate(
           // La prochaine salissure présente sera plus profonde.
           activeDepth++;
         }
-
-
-        // // Parcourt les salissures du dessus vers le dessous.
-        // for (let depth = 0; depth < dirtCount; depth++) {
-
-        //   const dirtIndex = this.layerOrders[orderOffset + depth];
-
-        //   const layer = this.layers[dirtIndex];
-
-        //   const amount = layer[pixelIndex];
-
-        //   // Une salissure absente laisse accéder à la suivante.
-        //   if (amount === 0) continue;
-
-        //   const dirt = this.dirtTypes[dirtIndex];
-
-        //   // Efficacité spécifique de l'outil.
-        //   const baseEfficiency = tool.efficiency[dirt.id] ?? 0;
-
-        //   // Malus progressif lié à la profondeur.
-        //   const depthMultiplier = Math.pow(
-        //     1 - tool.depthPenalty,
-        //     depth
-        //   );
-
-        //   // Résistance : 30 représente notre résistance de référence.
-        //   const resistanceMultiplier =
-        //     30 / Math.max(1, dirt.resistance);
-
-        //   // Atténuation du pinceau sur ses bords.
-        //   const brushStrength = 1 - distance / radius;
-
-        //   const reduction =
-        //     tool.power *
-        //     255 *
-        //     deltaTime *
-        //     baseEfficiency *
-        //     depthMultiplier *
-        //     resistanceMultiplier *
-        //     brushStrength;
-
-        //   // Quantité restante après nettoyage.
-        //   const newAmount = Math.max(
-        //     0,
-        //     Math.round(amount - reduction)
-        //   );
-
-        //   if (newAmount !== amount) {
-
-        //     layer[pixelIndex] = newAmount;
-
-        //     removed += amount - newAmount;
-        //   }
-
-        //   // Une seule couche peut être nettoyée par pixel
-        //   // pendant cette opération.
-        //   break;
-        // }
       }
     }
 
@@ -546,28 +428,4 @@ generate(
       Math.max(0, progress * 100)
     );
   }
-
-  // /**
-  //  * Calcule la quantité maximale initiale.
-  //  */
-  // getInitialAmount(): number {
-  //   return this.pixelCount * 255 * this.dirtTypes.length;
-  // }
-
-  // /**
-  //  * Retourne la progression globale en pourcentage.
-  //  */
-  // getProgress(): number {
-
-  //   const initial = this.getInitialAmount();
-
-  //   if (initial === 0) return 100;
-
-  //   const remaining = this.getRemainingAmount();
-
-  //   return Math.min(
-  //     100,
-  //     Math.max(0, (1 - remaining / initial) * 100)
-  //   );
-  // }
 }
