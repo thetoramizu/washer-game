@@ -12,6 +12,7 @@ import { GameMap } from '../../../models/game-map';
 import { GAME_MAPS } from '../../../models/game-maps.data';
 import { GamingState } from '../../../services/gaming-state';
 import { CleaningTool } from '../../../models/cleaning-tool';
+import { DecimalPipe } from '@angular/common';
 
 /**
  * Écran de jeu : canvas, nettoyage et barre d'outils.
@@ -20,7 +21,7 @@ import { CleaningTool } from '../../../models/cleaning-tool';
  * principal lors du refacto navigation.
  */
 @Component({
-  imports: [],
+  imports: [DecimalPipe],
   selector: 'wash-game-screen',
   styleUrl: './game-screen.scss',
   templateUrl: './game-screen.html',
