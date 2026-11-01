@@ -17,6 +17,7 @@
   <div class="progress-track">
     <div
       class="progress-fill"
+      [class.complete]="mapReward() > 0"
       [style.width.%]="progress"
     ></div>
   </div>
@@ -25,6 +26,10 @@
     <div class="victory-banner">
       Carte terminée ! Récompense : {{ mapReward() }} $
     </div>
+  } @else if (showFinishHint) {
+    <div class="finish-hint">
+      Encore un petit effort pour réclamer la récompense !
+    </div>
   }
 
   <section class="game-area">
@@ -32,12 +37,6 @@
     <canvas
       #gameCanvas
       class="game-canvas"
-      (pointerdown)="onPointerDown($event)"
-      (pointermove)="onPointerMove($event)"
-      (pointerup)="onPointerUp()"
-      (pointercancel)="onPointerUp()"
-      (pointerenter)="onPointerEnter($event)"
-      (pointerleave)="onPointerLeave()"
     ></canvas>
 
   </section>

@@ -3,6 +3,8 @@ import {
   Component,
   ElementRef,
   inject,
+  NgZone,
+  OnDestroy,
   signal,
   ViewChild,
 } from '@angular/core';
@@ -26,12 +28,18 @@ import { DecimalPipe } from '@angular/common';
   styleUrl: './game-screen.scss',
   templateUrl: './game-screen.html',
 })
-export class GameScreen implements AfterViewInit {
+export class GameScreen implements AfterViewInit, OnDestroy {
+
+  // Largeur native maximale du canvas : au-delà, la carte est
+  // rendue à une résolution plafonnée pour rester fluide.
+  private static readonly MAX_CANVAS_WIDTH = 900;
 
   @ViewChild('gameCanvas')
   canvasRef!: ElementRef<HTMLCanvasElement>;
 
   readonly gamingState = inject(GamingState);
+
+  private readonly ngZone = inject(NgZone);
 
   dirtTypes = DIRT_TYPES;
 
@@ -73,7 +81,28 @@ export class GameScreen implements AfterViewInit {
 
   progress = 0;
 
+  /**
+   * Le taux affiché est arrondi à l'entier : un joueur qui voit
+   * « 100 % » peut encore avoir d'infimes résidus à retirer
+   * avant d'atteindre le seuil de validation. On l'indique pour
+   * éviter la frustration, sans forcer un nettoyage parfait.
+   */
+  get showFinishHint(): boolean {
+    return this.mapReward() === 0 && this.progress >= 99.5;
+  }
+
   private lastProgressUpdate = 0;
+
+  // Boucle d'animation : rend la scène à chaque image au lieu
+  // de tout recalculer à chaque événement du pointeur.
+  private rafId = 0;
+  private renderScheduled = false;
+  private frameClock = 0;
+
+  // L'écoute du pointeur se fait directement sur le canvas,
+  // hors zone Angular : le rendu (canvas + requestAnimationFrame)
+  // n'a pas besoin du change detection à chaque mouvement.
+  private detachPointerListeners?: () => void;
 
   // Gains accumulés pendant la partie en cours.
   private earnedMoney = 0;
@@ -82,6 +111,11 @@ export class GameScreen implements AfterViewInit {
   readonly mapReward = signal(0);
 
   ngAfterViewInit(): void {
+
+    // Toute l'interaction avec le canvas est gérée hors zone
+    // Angular : les mouvements du pointeur et le rendu ne
+    // déclenchent plus de change detection à chaque image.
+    this.ngZone.runOutsideAngular(() => this.setupCanvasInteraction());
 
     // Le canvas n'existe que lorsque cet écran est affiché :
     // la partie peut donc démarrer ici, en tenant compte de
@@ -93,6 +127,45 @@ export class GameScreen implements AfterViewInit {
     } else {
       this.initializeGame();
     }
+  }
+
+  ngOnDestroy(): void {
+    this.detachPointerListeners?.();
+    cancelAnimationFrame(this.rafId);
+  }
+
+  /**
+   * Attache les écouteurs de pointeur directement sur le canvas.
+   *
+   * À appeler dans un contexte hors zone : cela évite qu'un
+   * pointermove (très fréquent) ne relance tout le change
+   * detection d'Angular alors que seul le canvas change.
+   */
+  private setupCanvasInteraction(): void {
+
+    const canvas = this.canvasRef.nativeElement;
+
+    const onDown = (event: PointerEvent) => this.onPointerDown(event);
+    const onMove = (event: PointerEvent) => this.onPointerMove(event);
+    const onUp = () => this.onPointerUp();
+    const onEnter = (event: PointerEvent) => this.onPointerEnter(event);
+    const onLeave = () => this.onPointerLeave();
+
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', onUp);
+    canvas.addEventListener('pointerenter', onEnter);
+    canvas.addEventListener('pointerleave', onLeave);
+
+    this.detachPointerListeners = () => {
+      canvas.removeEventListener('pointerdown', onDown);
+      canvas.removeEventListener('pointermove', onMove);
+      canvas.removeEventListener('pointerup', onUp);
+      canvas.removeEventListener('pointercancel', onUp);
+      canvas.removeEventListener('pointerenter', onEnter);
+      canvas.removeEventListener('pointerleave', onLeave);
+    };
   }
 
   /**
@@ -122,32 +195,17 @@ export class GameScreen implements AfterViewInit {
 
     this.canvas = this.canvasRef.nativeElement;
 
-    this.canvas.width = this.WIDTH;
-    this.canvas.height = this.HEIGHT;
+    // Résolution native du canvas plafonnée à la taille réelle :
+    // les grandes cartes sont affichées plus petites à l'écran,
+    // ce qui évite tout agrandissement flou et toute surcharge.
+    const displayWidth = Math.min(this.WIDTH, GameScreen.MAX_CANVAS_WIDTH);
+
+    const scale = displayWidth / this.WIDTH;
+
+    this.canvas.width = Math.round(this.WIDTH * scale);
+    this.canvas.height = Math.round(this.HEIGHT * scale);
 
     this.ctx = this.canvas.getContext('2d')!;
-
-    // Génère la surface propre qui servira de fond.
-    const cleanCanvas = document.createElement('canvas');
-
-    cleanCanvas.width = this.WIDTH;
-    cleanCanvas.height = this.HEIGHT;
-
-    const cleanContext = cleanCanvas.getContext('2d')!;
-
-    if (!cleanContext) return;
-
-    // Génération de la texture de fond.
-    this.cleanCtx = cleanContext;
-    this.generateCleanSurface();
-
-    // Conserve une copie de la surface propre.
-    this.cleanImage = cleanContext.getImageData(
-      0,
-      0,
-      this.WIDTH,
-      this.HEIGHT
-    );
 
     /**
      * Récupère uniquement les salissures autorisées
@@ -167,6 +225,29 @@ export class GameScreen implements AfterViewInit {
       mapDirtTypes
     );
 
+    // Génère la surface propre qui servira de fond, à la même
+    // échelle réduite que le tampon interne du moteur.
+    const cleanCanvas = document.createElement('canvas');
+
+    cleanCanvas.width = this.dirtEngine.bufferWidth;
+    cleanCanvas.height = this.dirtEngine.bufferHeight;
+
+    const cleanContext = cleanCanvas.getContext('2d')!;
+
+    if (!cleanContext) return;
+
+    // Génération de la texture de fond.
+    this.cleanCtx = cleanContext;
+    this.generateCleanSurface();
+
+    // Conserve une copie de la surface propre.
+    this.cleanImage = cleanContext.getImageData(
+      0,
+      0,
+      this.dirtEngine.bufferWidth,
+      this.dirtEngine.bufferHeight
+    );
+
     /**
      * Génère les salissures selon la densité configurée
      * dans le catalogue de cartes.
@@ -180,7 +261,7 @@ export class GameScreen implements AfterViewInit {
     this.mapReward.set(0);
 
     // Affichage initial.
-    this.render();
+    this.drawFrame();
 
     this.updateProgress();
   }
@@ -192,14 +273,18 @@ export class GameScreen implements AfterViewInit {
   private generateCleanSurface(): void {
     const ctx = this.cleanCtx;
 
+    // La surface est dessinée à l'échelle du tampon du moteur.
+    const width = this.dirtEngine.bufferWidth;
+    const height = this.dirtEngine.bufferHeight;
+
     ctx.fillStyle = '#aaa99c';
-    ctx.fillRect(0, 0, this.WIDTH, this.HEIGHT);
+    ctx.fillRect(0, 0, width, height);
 
-    // Dalles de pierre
-    const tileSize = 50;
+    // Dalles de pierre (adaptées à la résolution réduite).
+    const tileSize = 25;
 
-    for (let x = 0; x < this.WIDTH; x += tileSize) {
-      for (let y = 0; y < this.HEIGHT; y += tileSize) {
+    for (let x = 0; x < width; x += tileSize) {
+      for (let y = 0; y < height; y += tileSize) {
 
         ctx.fillStyle =
           Math.random() > 0.5 ? '#b5b4a6' : '#a5a496';
@@ -214,14 +299,14 @@ export class GameScreen implements AfterViewInit {
     }
 
     // Légères variations de texture
-    for (let i = 0; i < 1800; i++) {
+    for (let i = 0; i < 450; i++) {
       ctx.fillStyle = 'rgba(70, 70, 60, 0.08)';
 
       ctx.fillRect(
-        Math.random() * this.WIDTH,
-        Math.random() * this.HEIGHT,
-        2,
-        2
+        Math.random() * width,
+        Math.random() * height,
+        1,
+        1
       );
     }
   }
@@ -245,7 +330,10 @@ export class GameScreen implements AfterViewInit {
       this.cleanAtPointer();
     }
 
-    this.render();
+    // Le rendu est regroupé dans la boucle d'animation :
+    // plusieurs mouvements entre deux images ne coûtent
+    // qu'un seul dessin complet.
+    this.scheduleRender();
   }
 
   onPointerUp(): void {
@@ -257,24 +345,26 @@ export class GameScreen implements AfterViewInit {
   onPointerEnter(event: PointerEvent): void {
     this.pointerInside = true;
     this.updatePointerPosition(event);
-    this.render();
+    this.scheduleRender();
   }
 
   onPointerLeave(): void {
     this.pointerInside = false;
-    this.render();
+    this.scheduleRender();
   }
 
   private updatePointerPosition(event: PointerEvent): void {
     const rect = this.canvas.getBoundingClientRect();
 
+    // Les coordonnées sont exprimées dans l'espace du canvas
+    // (échelle native), pas de la carte logique.
     this.pointerX =
       (event.clientX - rect.left) *
-      (this.WIDTH / rect.width);
+      (this.canvas.width / rect.width);
 
     this.pointerY =
       (event.clientY - rect.top) *
-      (this.HEIGHT / rect.height);
+      (this.canvas.height / rect.height);
   }
 
   // --------------------------------
@@ -302,22 +392,24 @@ export class GameScreen implements AfterViewInit {
 
     this.lastCleanTime = now;
 
+    // Le pointeur est à l'échelle du canvas ; on le reprojette
+    // dans l'espace logique de la carte avant de le transmettre.
+    const mapX = this.pointerX * (this.WIDTH / this.canvas.width);
+    const mapY = this.pointerY * (this.HEIGHT / this.canvas.height);
+
     // Le moteur utilise directement les caractéristiques améliorées.
     const result = this.dirtEngine.cleanAt(
-      this.pointerX,
-      this.pointerY,
+      mapX,
+      mapY,
       tool,
       deltaTime
     );
 
     // Accumule les gains selon les salissures retirées.
+    // L'économie est centralisée dans le moteur.
     if (result.removed > 0) {
-      this.earnedMoney += this.computeReward(result.removed);
-    }
-
-    // Actualise le rendu uniquement si quelque chose a changé.
-    if (result.changed) {
-      this.render();
+      this.earnedMoney +=
+        result.removed * this.dirtEngine.getRewardPerUnit();
     }
 
     // Actualisation périodique de la progression.
@@ -329,39 +421,31 @@ export class GameScreen implements AfterViewInit {
     }
   }
 
-  /**
-   * Convertit la quantité de salissure retirée en gain.
-   *
-   * Chaque type de salissure possède son propre multiplicateur
-   * de récompense ; la valeur brute est volontairement modeste
-   * pour rester équilibrée avec les prix de la boutique.
-   */
-  private computeReward(removed: number): number {
-
-    let multiplier = 0;
-
-    const density = this.activeMap().dirtDensity;
-
-    const totalDensity = Object.values(density)
-      .reduce((sum, value) => sum + value, 0);
-
-    // Moyenne pondérée des multiplicateurs de la carte.
-    for (const dirt of this.dirtTypes) {
-
-      const weight = density[dirt.id];
-
-      if (weight === undefined) continue;
-
-      multiplier +=
-        dirt.rewardMultiplier * (weight / totalDensity);
-    }
-
-    return removed * 0.01 * multiplier;
-  }
-
   // --------------------------------
   // Rendu
   // --------------------------------
+
+  /**
+   * Planifie un dessin pour la prochaine image.
+   *
+   * Regrouper les rendus dans requestAnimationFrame évite de
+   * recalculer toute la scène à chaque événement du pointeur
+   * (qui peut se déclencher bien plus souvent que 60 fois/s).
+   */
+  private scheduleRender(): void {
+
+    if (this.renderScheduled) return;
+
+    this.renderScheduled = true;
+
+    this.rafId = requestAnimationFrame((time) => {
+
+      this.renderScheduled = false;
+      this.frameClock = time;
+
+      this.drawFrame();
+    });
+  }
 
   /**
    * Dessine la carte complète.
@@ -369,7 +453,7 @@ export class GameScreen implements AfterViewInit {
    * Le moteur compose les salissures sur la surface propre.
    * Le composant ajoute ensuite le curseur.
    */
-  private render(): void {
+  private drawFrame(): void {
 
     if (!this.ctx || !this.dirtEngine || !this.cleanImage) {
       return;
@@ -386,12 +470,17 @@ export class GameScreen implements AfterViewInit {
 
     if (this.pointerInside && tool) {
 
+      // Le rayon de l'outil est exprimé en unités carte :
+      // on le convertit à l'échelle du canvas.
+      const radiusOnCanvas =
+        tool.radius * (this.canvas.width / this.WIDTH);
+
       this.ctx.beginPath();
 
       this.ctx.arc(
         this.pointerX,
         this.pointerY,
-        tool.radius,
+        radiusOnCanvas,
         0,
         Math.PI * 2
       );
@@ -427,20 +516,30 @@ export class GameScreen implements AfterViewInit {
 
     if (!this.dirtEngine) return;
 
-    this.progress = this.dirtEngine.getProgress();
+    const progress = this.dirtEngine.getProgress();
+    const completed = this.dirtEngine.isComplete();
 
-    // La carte est terminée : on verse la récompense une seule fois.
-    if (this.progress >= 100 && this.mapReward() === 0) {
+    // La progression est pilotée par un signal : les mises à jour
+    // déclenchées hors zone Angular (boucle de rendu) seront bien
+    // propagées au gabarit.
+    this.ngZone.run(() => {
 
-      const reward = Math.max(
-        50,
-        Math.round(this.earnedMoney)
-      );
+      this.progress.set(progress);
 
-      this.mapReward.set(reward);
+      // La carte est validée dès le seuil de propreté atteint,
+      // ce qui correspond au « 100 % » vu par le joueur.
+      // La récompense n'est versée qu'une seule fois.
+      if (completed && this.mapReward() === 0) {
 
-      this.gamingState.addMoney(reward);
-    }
+        const reward = Math.max(
+          25,
+          Math.round(this.earnedMoney)
+        );
+
+        this.mapReward.set(reward);
+        this.gamingState.addMoney(reward);
+      }
+    });
   }
 
   // --------------------------------
@@ -463,7 +562,7 @@ export class GameScreen implements AfterViewInit {
 
     this.lastCleanTime = 0;
 
-    this.render();
+    this.drawFrame();
 
     this.updateProgress();
   }
@@ -487,7 +586,7 @@ export class GameScreen implements AfterViewInit {
     this.lastCleanTime = 0;
 
     // Actualise le curseur avec le nouveau rayon.
-    this.render();
+    this.drawFrame();
   }
 
   /**
