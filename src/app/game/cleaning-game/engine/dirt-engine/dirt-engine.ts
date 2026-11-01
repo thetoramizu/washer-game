@@ -72,16 +72,23 @@ export class DirtEngine {
    * est considérée terminée et la récompense versée dès que ce seuil
    * est atteint : le joueur garde donc une petite marge d'erreur.
    */
-  static readonly COMPLETION_THRESHOLD = 97;
+  static readonly COMPLETION_THRESHOLD = 98;
 
   /**
-   * Buffer de rendu réutilisé pour les recompositions complètes.
+   * Miroir CPU de tout ce qui est visible dans le Canvas :
+   * fond propre + salissures composées. C'est LA source de vérité
+   * du rendu incrémental — le Canvas n'est jamais lu, uniquement
+   * écrit par `putImageData`.
    *
-   * Alloué à la première composition totale (les dimensions ne
-   * changent jamais en cours de vie du moteur), il évite de créer
-   * une nouvelle ImageData complète à chaque regeneration.
+   * Le curseur dessiné par le composant par-dessus ce contenu est
+   * donc automatiquement effacé à chaque recomposition de zone,
+   * sans jamais laisser de traînée ni masquer la carte.
    */
-  private renderBuffer?: ImageData;
+  private compositeBuffer?: ImageData;
+
+  private get composite(): Uint8ClampedArray<ArrayBuffer> {
+    return this.compositeBuffer!.data;
+  }
 
   /**
    * Indique si les salissures ont changé depuis le dernier rendu.
@@ -103,6 +110,11 @@ export class DirtEngine {
   private regionMinY = 0;
   private regionMaxX = -1;
   private regionMaxY = -1;
+
+  /**
+   * Buffer temporaire pour le rendu incrémental d'une zone.
+   */
+  private regionBuffer?: ImageData;
 
   constructor(
     width: number,
@@ -127,9 +139,8 @@ export class DirtEngine {
       this.pixelCount * dirtTypes.length
     );
 
-    // Le buffer de composition complète n'est alloué qu'au premier
-    // rendu total (voir render()) : les cartes générées puis
-    // immédiatement nettoyées au pinceau ne paient jamais ce coût.
+    // Le miroir CPU (composite) est alloué dès le premier appel à
+    // render() (voir render()).
 
     // Convertit les couleurs hexadécimales en RGB une seule fois.
     this.dirtColors = dirtTypes.map(dirt => {
@@ -511,17 +522,15 @@ private fillCanonicalOrders(): void {
 /**
  * Dessine l'état actuel des salissures dans le Canvas.
  *
- * Le Canvas conserve son contenu entre deux appels : il n'est donc
- * jamais nécessaire de recomposer toute la carte à chaque frame.
- *
- * - Une zone a été invalidée (nettoyage, ou composant qui signale
- *   une région à repeindre — ancienne position du curseur) : seuls
- *   les pixels de cette zone sont recomposés et envoyés via un
- *   dirty rect.
- * - Premier rendu ou régénération : toute la carte est recomposée.
- *
- * Les pixels propres sont reconnus grâce à leur ordre canonique et
- * remplis d'un seul bloc, sans composition couche par couche.
+ * Architecture de rendu :
+ * - `composite` est un miroir CPU complet (fond + salissures) :
+ *   c'est la source de vérité, elle ne contient JAMAIS le curseur.
+ * - Une zone invalidée (nettoyage, ou ancienne position du curseur
+ *   signalée par le composant via invalidateRegion()) est recomposée
+ *   dans `composite`, puis recopiée dans le Canvas via un dirty rect.
+ * - Le Canvas n'est jamais lu : tout dessin superposé par le
+ *   composant (le curseur) est donc effacé dès que sa zone est
+ *   recomposée — sans jamais masquer la carte ni laisser de traînée.
  */
 render(
   ctx: CanvasRenderingContext2D,
@@ -530,90 +539,52 @@ render(
 
   const dirtCount = this.dirtTypes.length;
 
-  if (this.fullRedrawRequired || !this.hasRegion) {
+  // Allocation unique du miroir CPU à la première frame.
+  if (!this.compositeBuffer) {
+    this.compositeBuffer = new ImageData(this.width, this.height);
+  }
 
-    // Rien à recomposer et aucune recomposition totale requise :
-    // le contenu du Canvas est déjà à jour, sortie immédiate
-    // (les simples déplacements du curseur hors carte ne coûtent
-    // rien). En revanche, si une région a été signalée comme à
-    // repeindre, on doit la recomposer même sans changement de
-    // salissure : c'est ce qui permet d'effacer le curseur que
-    // le composant dessine directement dans le Canvas.
-    if (!this.dirty && !this.hasRegion) return;
+  const needsFullRedraw = this.fullRedrawRequired;
 
-    // Cas "toute la carte" : composition complète dans le buffer.
-    if (!this.renderBuffer) {
-      this.renderBuffer = new ImageData(this.width, this.height);
-    }
-
-    const pixels = this.renderBuffer.data;
-
-    // Le fond propre ne change jamais : on le recopie en entier.
-    pixels.set(baseImage.data);
+  // Salissures retirées depuis le dernier rendu : toute la carte
+  // doit être recomposée dans le miroir (cas rare : première frame,
+  // régénération...).
+  if (this.dirty) {
 
     for (let pixel = 0; pixel < this.pixelCount; pixel++) {
-      this.composePixel(pixel, dirtCount, pixels);
+      this.composePixel(pixel, dirtCount, baseImage);
     }
 
+    this.dirty = false;
     this.fullRedrawRequired = false;
+  }
+
+  // Une région a été signalée à repeindre (rectangle du pinceau, ou
+  // ancienne position du curseur) : on la recopie du miroir vers le
+  // Canvas via un dirty rect. Le miroir ne contenant jamais le
+  // curseur, ce recopiage l'effare sans jamais masquer la carte.
+  // Sans région, le Canvas est déjà identique au miroir : rien à faire.
+  if (needsFullRedraw || !this.hasRegion) {
+
     this.resetRegion();
 
-    this.dirty = false;
+    if (needsFullRedraw) {
+      ctx.putImageData(this.compositeBuffer, 0, 0);
+    }
 
-    ctx.putImageData(this.renderBuffer, 0, 0);
     return;
   }
 
-  // Aucune salissure retirée depuis le dernier rendu : seule la
-  // région signalée par le composant doit être repeinte (elle ne
-  // contient alors que le fond et les salissures inchangées, ce
-  // qui efface tout dessin superposé comme le curseur). La région
-  // ci-dessous sera recomposée puis le drapeau "dirty" sera levé.
-
-  // Cas "zone touchée" : on ne recompose que le rectangle modifié.
   const regionWidth = this.regionMaxX - this.regionMinX + 1;
   const regionHeight = this.regionMaxY - this.regionMinY + 1;
 
-  // Buffer temporaire limité à la zone, réutilisé entre les frames.
-  if (
-    !this.regionBuffer ||
-    this.regionBuffer.width !== regionWidth ||
-    this.regionBuffer.height !== regionHeight
-  ) {
-    this.regionBuffer = new ImageData(regionWidth, regionHeight);
-  }
-
-  const pixels = this.regionBuffer.data;
-
-  for (let py = 0; py < regionHeight; py++) {
-
-    const rowOffset = (this.regionMinY + py) * this.width;
-
-    for (let px = 0; px < regionWidth; px++) {
-
-      const pixel = rowOffset + this.regionMinX + px;
-      const outOffset = (py * regionWidth + px) * 4;
-
-      // Repart du fond propre pour cette zone...
-      const baseOffset = pixel * 4;
-
-      pixels[outOffset] = baseImage.data[baseOffset];
-      pixels[outOffset + 1] = baseImage.data[baseOffset + 1];
-      pixels[outOffset + 2] = baseImage.data[baseOffset + 2];
-      pixels[outOffset + 3] = baseImage.data[baseOffset + 3];
-
-      // ...puis compose les salissures encore présentes.
-      this.composePixel(pixel, dirtCount, pixels);
-    }
-  }
-
   this.resetRegion();
 
-  this.dirty = false;
+  if (regionWidth <= 0 || regionHeight <= 0) return;
 
-  // N'envoie que la zone modifiée au Canvas.
+  // N'envoie que la zone modifiée au Canvas (source : le miroir).
   ctx.putImageData(
-    this.regionBuffer,
+    this.compositeBuffer,
     0,
     0,
     this.regionMinX,
@@ -622,11 +593,6 @@ render(
     regionHeight
   );
 }
-
-/**
- * Buffer temporaire pour le rendu incrémental d'une zone.
- */
-private regionBuffer?: ImageData;
 
 /**
  * Étend la zone à recomposer lors du prochain rendu.
@@ -664,12 +630,39 @@ private resetRegion(): void {
 }
 
 /**
- * Compose toutes les salissures d'un pixel dans le buffer de rendu.
+ * Recompose entièrement un pixel du miroir CPU : fond propre puis
+ * salissures encore présentes. Repartir du fond (et non de l'état
+ * précédent du miroir) garantit l'idempotence — un pixel nettoyé
+ * puis recomposé ne conserve jamais de résidu ni de dessin superposé.
  */
 private composePixel(
   pixel: number,
   dirtCount: number,
-  pixels: Uint8ClampedArray
+  baseImage: ImageData
+): void {
+
+  const offset = pixel * 4;
+
+  const composite = this.composite;
+
+  composite[offset] = baseImage.data[offset];
+  composite[offset + 1] = baseImage.data[offset + 1];
+  composite[offset + 2] = baseImage.data[offset + 2];
+  composite[offset + 3] = baseImage.data[offset + 3];
+
+  this.composePixelInto(pixel, dirtCount, composite, offset);
+}
+
+/**
+ * Compose toutes les salissures d'un pixel dans le buffer donné,
+ * à l'offset fourni. Le buffer doit déjà contenir la couleur du
+ * fond propre pour ce pixel.
+ */
+private composePixelInto(
+  pixel: number,
+  dirtCount: number,
+  pixels: Uint8ClampedArray<ArrayBuffer>,
+  pixelOffset: number
 ): void {
 
   const orderOffset = pixel * dirtCount;
@@ -679,8 +672,6 @@ private composePixel(
   if (this.isCanonicalOrder(orderOffset, dirtCount)) {
     return;
   }
-
-  const pixelOffset = pixel * 4;
 
   let r = pixels[pixelOffset];
   let g = pixels[pixelOffset + 1];
