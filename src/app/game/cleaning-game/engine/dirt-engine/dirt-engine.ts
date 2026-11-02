@@ -7,7 +7,48 @@ import { DirtType } from "../../../models/dirt-type";
 export interface CleaningResult {
   changed: boolean;
   removed: number;
+
+  /**
+   * Vrai quand le pinceau a rencontré une couche incrustée que
+   * l'outil équipé ne peut pas attaquer (verrou d'outil). Le
+   * composant utilise ce signal pour afficher un retour visuel
+   * et sonore « il me faut un autre outil ».
+   */
+  blocked: boolean;
+
+  /**
+   * Identifiant du type de salissure responsable du verrou
+   * (uniquement si `blocked` est vrai).
+   */
+  blockedBy?: string;
 }
+
+/**
+ * Durée de référence d'une carte, calculée à la génération en
+ * fonction de sa surface et de sa densité de salissures.
+ *
+ * La récompense reste pleine tant que le joueur termine avant
+ * cette durée ; ensuite elle décroît linéairement jusqu'un
+ * plancher (voir GameScreen), ce qui transforme le nettoyage
+ * en course contre la montre sans forcer personne.
+ */
+export const PAR_TIME_SECONDS = 180;
+
+/**
+ * Seuil d'intensité à partir duquel une couche de salissure est
+ * considérée comme « incrustée » : trop épaisse pour être attaquée
+ * directement, elle doit d'abord être décapée par l'outil adapté
+ * (l'index de sa couche figure dans `requiredToolLayer`).
+ */
+const EMBEDDED_THRESHOLD = 245;
+
+/**
+ * Multiplicateur d'efficacité appliqué aux autres couches d'un
+ * même pixel tant que la couche incrustée n'a pas été percée :
+ * quasi nul, il donne la sensation d'une surface qui glisse
+ * sans effet.
+ */
+const LOCKED_EFFICIENCY_FACTOR = 0.06;
 
 /**
  * Progression à partir de laquelle la carte est considérée
@@ -107,7 +148,31 @@ export class DirtEngine {
    * superposées : impossible de « farmer » des sommes énormes avec
    * un outil surpuissant ou une carte dense.
    */
-  private static readonly DIRT_UNITS_PER_REWARD_DOLLAR = 100000;
+  static readonly DIRT_UNITS_PER_REWARD_DOLLAR = 100000;
+
+  /**
+   * Fraction de zones « incrustées » générées par défaut : une
+   * petite partie des taches atteint l'intensité maximale et ne
+   * devient nettoyable qu'avec l'outil adapté (verrou d'outil).
+   */
+  private static readonly EMBEDDED_ZONE_RATIO = 0.12;
+
+  /**
+   * Index de la couche que l'outil équipé doit pouvoir décaper
+   * pour attaquer chaque pixel. Un pixel sans verrou vaut -1.
+   *
+   * Couche incrustée : le pixel n'est nettoyable (toutes couches
+   * confondues) que si `tool.requiredToolLayer` correspond à
+   * l'index de cette couche — sinon le pinceau glisse sans effet.
+   */
+  private requiredToolLayer!: Int8Array;
+
+  /**
+   * Durée de référence de la carte actuellement générée, en
+   * secondes (voir PAR_TIME_SECONDS) : proportionnelle à la
+   * quantité initiale de salissure.
+   */
+  private parTimeSeconds = PAR_TIME_SECONDS;
 
   /**
    * Récompense maximale versée pour une carte, quel que soit son
@@ -153,6 +218,10 @@ export class DirtEngine {
       this.pixelCount * dirtTypes.length
     );
 
+    // Verrou d'outil par pixel (-1 = aucune couche incrustée).
+    this.requiredToolLayer = new Int8Array(this.pixelCount);
+    this.requiredToolLayer.fill(-1);
+
     // Tampon intermédiaire pour l'agrandissement final.
     this.buffer = new ImageData(this.bufferWidth, this.bufferHeight);
 
@@ -191,15 +260,29 @@ export class DirtEngine {
  * possible toutes les 8 unités) : les zones sont ensuite
  * dessinées en douceur dans le tampon basse résolution, ce
  * qui donne des formes organiques tout en restant très rapide.
+ *
+ * `embeddedRatio` (0…1) contrôle la proportion de zones générées
+ * « incrustées » (intensité maximale, verrouillées jusqu'à ce que
+ * l'outil adapté soit équipé). Sans cette option, une petite
+ * fraction (12 %) des taches est quand même incrustée pour créer
+ * des moments où changer d'outil devient indispensable.
  */
 generate(
-  dirtDensity: Record<string, number>
+  dirtDensity: Record<string, number>,
+  embeddedRatio?: number
 ): void {
 
-  // Réinitialise toutes les couches.
+  // Réinitialise toutes couches et verrous.
   for (const layer of this.layers) {
     layer.fill(0);
   }
+
+  this.requiredToolLayer.fill(-1);
+
+  const ratio = Math.min(
+    1,
+    Math.max(0, embeddedRatio ?? DirtEngine.EMBEDDED_ZONE_RATIO)
+  );
 
   const scale = DirtEngine.RENDER_SCALE;
 
@@ -228,6 +311,10 @@ generate(
 
     // Génère les zones indépendantes.
     for (let i = 0; i < zoneCount; i++) {
+
+      // Quelques zones sont « incrustées » : intensité maximale
+      // sur tout le disque et verrou d'outil (voir cleanAt).
+      const embedded = Math.random() < ratio;
 
       // Centre choisi sur le maillage grossier (en coordonnées carte).
       const centerX =
@@ -269,7 +356,11 @@ generate(
           // progressivement au lieu de former un disque net.
           const edge = Math.min(1, (br - distance) / (br * 0.4));
 
-          const intensity = Math.round(255 * edge);
+          // Une zone incrustée atteint l'intensité maximale sur
+          // toute sa surface : elle sera marquée d'un verrou.
+          const intensity = embedded
+            ? 255
+            : Math.round(255 * edge);
 
           if (intensity <= 0) continue;
 
@@ -279,6 +370,11 @@ generate(
           // l'intensité la plus forte.
           if (intensity > layer[index]) {
             layer[index] = intensity;
+
+            // Mémorise le verrou d'outil pour ce pixel/couche.
+            if (embedded && intensity >= EMBEDDED_THRESHOLD) {
+              this.requiredToolLayer[index] = dirtIndex;
+            }
           }
         }
       }
@@ -294,6 +390,18 @@ generate(
 
   // Mémorise la quantité initiale réelle pour la progression.
   this.initialAmount = this.getRemainingAmount();
+
+  // Durée de référence proportionnelle à la quantité de
+  // salissure : ~180 s pour une carte « standard », davantage
+  // pour les grandes cartes denses (les petits chantiers restent
+  // généreux en temps).
+  const referenceAmount =
+    (this.width * this.height) / 2 * 0.35;
+
+  this.parTimeSeconds = Math.round(
+    PAR_TIME_SECONDS *
+    Math.max(0.4, Math.min(2, this.initialAmount / referenceAmount))
+  );
 }
 
 /**
@@ -400,6 +508,10 @@ getRewardPerUnit(): number {
 
     let removed = 0;
 
+    // Le pinceau a-t-il rencontré un verrou d'outil ?
+    let blocked = false;
+    let blockedBy: string | undefined;
+
     const dirtCount = this.dirtTypes.length;
 
     // Compense la plus faible surface du tampon pour conserver
@@ -423,6 +535,24 @@ getRewardPerUnit(): number {
         // Récupère l'ordre spécifique à ce pixel.
         const orderOffset = pixelIndex * dirtCount;
 
+        // Verrou d'outil du pixel : index de la couche incrustée,
+        // ou -1 si le pixel est entièrement libre. Tant que cette
+        // couche n'a pas été percée par l'outil requis, tout le
+        // pixel reste quasi imperméable au nettoyage.
+        const lockLayer = this.requiredToolLayer[pixelIndex];
+
+        let lockActive = false;
+
+        if (lockLayer >= 0 && this.layers[lockLayer][pixelIndex] > 0) {
+
+          const lockDirt = this.dirtTypes[lockLayer];
+
+          if ((tool.requiredToolLayer ?? -1) !== lockLayer) {
+            lockActive = true;
+            blocked = true;
+            blockedBy = lockDirt.id;
+          }
+        }
 
         // Nombre de couches réellement présentes au-dessus
         // de la couche actuellement traitée.
@@ -443,7 +573,14 @@ getRewardPerUnit(): number {
           const dirt = this.dirtTypes[dirtIndex];
 
           // Efficacité spécifique de l'outil.
-          const baseEfficiency = tool.efficiency[dirt.id] ?? 0;
+          let baseEfficiency = tool.efficiency[dirt.id] ?? 0;
+
+          // Verrou actif : le pinceau glisse sur la surface sans
+          // attaquer aucune couche (sauf un résidu infime qui
+          // laisse espérer le joueur).
+          if (lockActive) {
+            baseEfficiency *= LOCKED_EFFICIENCY_FACTOR;
+          }
 
           // Malus appliqué selon la profondeur réelle.
           const depthMultiplier = Math.pow(
@@ -488,7 +625,9 @@ getRewardPerUnit(): number {
 
     return {
       changed: removed > 0,
-      removed
+      removed,
+      blocked,
+      blockedBy
     };
   }
 
