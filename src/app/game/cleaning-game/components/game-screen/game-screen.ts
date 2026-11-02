@@ -15,6 +15,7 @@ import { GAME_MAPS } from '../../../models/game-maps.data';
 import { GamingState } from '../../../services/gaming-state';
 import { CleaningTool } from '../../../models/cleaning-tool';
 import { DecimalPipe } from '@angular/common';
+import { AudioService, WorldAmbience } from '../../../services/audio.service';
 
 /**
  * Particule éphémère dessinée par la boucle d'animation :
@@ -89,6 +90,26 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   canvasRef!: ElementRef<HTMLCanvasElement>;
 
   readonly gamingState = inject(GamingState);
+
+  // Audio synthétisé (frottement, gains, victoire, ambiance).
+  private readonly audio = inject(AudioService);
+
+  /**
+   * Préférence sonore exposée au gabarit (bouton 🔊/🔇 de
+   * l'en-tête) ; le vrai état vit dans la sauvegarde.
+   */
+  readonly audioMuted = this.audio.muted;
+
+  toggleMute(): void {
+    this.audio.toggleMute();
+  }
+
+  /**
+   * Ambiance sonore du monde actuellement chargé.
+   */
+  private get worldAmbience(): WorldAmbience {
+    return this.activeMap().worldId as WorldAmbience;
+  }
 
   dirtTypes = DIRT_TYPES;
 

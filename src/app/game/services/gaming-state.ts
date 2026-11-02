@@ -4,9 +4,10 @@ import { Injectable, computed, effect, inject, signal } from '@angular/core';
 import { GameMap } from '../models/game-map';
 import { CleaningTool, ToolUpgradeType } from '../models/cleaning-tool';
 import { CLEANING_TOOLS } from '../models/cleaning-tools.data';
+import { DIRT_TYPES } from '../models/dirt-types.data';
 import { ToolUpgradeInventory } from '../models/tool-upgrade';
 import { TOOL_UPGRADES } from '../models/tool-upgrades-data';
-import { SaveData, SaveState } from './save-state';
+import { MapRecord, SaveData, SaveState } from './save-state';
 
 /**
  * Écrans disponibles dans le jeu.
@@ -47,6 +48,8 @@ export class GamingState {
       unlockedMaps: this.unlockedMaps(),
       upgradeInventory: this.upgradeInventory(),
       completedMaps: this.completedMaps(),
+      mapRecords: this.mapRecords(),
+      audioMuted: this.saveState.audioMuted(),
     };
   }
 
@@ -61,6 +64,11 @@ export class GamingState {
     this.unlockedMaps.set(save.unlockedMaps);
     this.completedMaps.set(save.completedMaps);
     this.upgradeInventory.set(save.upgradeInventory);
+    this.mapRecords.set(save.mapRecords);
+
+    // La préférence sonore vit dans SaveState (lue par
+    // l'AudioService) ; on la resynchronise ici au chargement.
+    this.saveState.audioMuted.set(save.audioMuted);
   }
 
   /**
@@ -76,6 +84,8 @@ export class GamingState {
     this.equippedToolId.set('sponge');
     this.unlockedMaps.set(['terrace', 'attic-painting']);
     this.completedMaps.set([]);
+    this.mapRecords.set({});
+    this.saveState.audioMuted.set(false);
     this.upgradeInventory.set({
       sponge: { radius: 0, power: 0, efficiency: 0, penetration: 0 },
       brush: { power: 0, efficiency: 0, penetration: 0 },
@@ -294,6 +304,103 @@ markMapCompleted(mapId: string): void {
 
   this.completedMaps.update(maps => [...maps, mapId]);
 }
+
+  // --------------------------------
+  // Records de temps & étoiles
+  // --------------------------------
+
+  /**
+   * Meilleur temps et étoiles obtenues par carte.
+   */
+  readonly mapRecords = signal<Record<string, MapRecord>>({});
+
+  getMapRecord(mapId: string): MapRecord | undefined {
+    return this.mapRecords()[mapId];
+  }
+
+  /**
+   * Durée « cible » d'une carte, dérivée de sa surface et de la
+   * densité totale de ses salissures : les étoiles sont calibrées
+   * par carte (une grande carte difficile n'exige pas le même
+   * chrono qu'une petite terrasse).
+   */
+  getMapTargetTimeMs(map: GameMap): number {
+
+    const areaUnits = (map.width * map.height) / 10_000;
+
+    const totalZones = Object.values(map.dirtDensity).reduce(
+      (sum, count) => sum + count,
+      0
+    );
+
+    // Résistance moyenne pondérée des salissures présentes :
+    // une carte pleine de moisissure demandera plus de temps.
+    let weightedResistance = 0;
+
+    for (const [dirtId, count] of Object.entries(map.dirtDensity)) {
+      const dirt = DIRT_TYPES.find(item => item.id === dirtId);
+      weightedResistance += (dirt?.resistance ?? 20) * count;
+    }
+
+    const averageResistance =
+      totalZones > 0 ? weightedResistance / totalZones : 20;
+
+    const difficultyFactor =
+      map.difficulty === 'easy' ? 1 :
+      map.difficulty === 'medium' ? 1.35 : 1.7;
+
+    // Cœur du calibrage : ~4 s par zone de salissure sur une
+    // surface de référence, ajusté par résistance et difficulté.
+    const baseSeconds =
+      (totalZones * 4 + areaUnits * 6) *
+      (0.7 + averageResistance / 100) *
+      difficultyFactor;
+
+    return Math.round(Math.max(30, baseSeconds) * 1000);
+  }
+
+  /**
+   * Étoiles méritées pour un temps donné sur une carte :
+   * 3★ sous la cible, 2★ sous 2× la cible, 1★ au-delà.
+   */
+  getStarsForTime(map: GameMap, timeMs: number): number {
+
+    const target = this.getMapTargetTimeMs(map);
+
+    if (timeMs <= target) return 3;
+    if (timeMs <= target * 2) return 2;
+    return 1;
+  }
+
+  /**
+   * Enregistre une partie terminée : conserve le meilleur temps
+   * et la meilleure étoile obtenue. Retourne true si un nouveau
+   * record est battu (pour afficher « 🏆 Nouveau record ! »).
+   */
+  submitMapResult(map: GameMap, timeMs: number): boolean {
+
+    const previous = this.mapRecords()[map.id];
+
+    const stars = this.getStarsForTime(map, timeMs);
+    const isRecord = !previous || timeMs < previous.bestTimeMs;
+
+    const bestTimeMs = isRecord
+      ? timeMs
+      : previous.bestTimeMs;
+
+    // Les étoiles suivent toujours le meilleur temps : impossible
+    // de régresser son record d'étoiles en jouant plus lentement.
+    const bestStars = isRecord
+      ? stars
+      : Math.max(previous.stars, stars);
+
+    this.mapRecords.update(records => ({
+      ...records,
+      [map.id]: { bestTimeMs, stars: bestStars },
+    }));
+
+    return isRecord;
+  }
 
 
   // --------------------------------

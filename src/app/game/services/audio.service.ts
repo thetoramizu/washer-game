@@ -63,7 +63,7 @@ export class AudioService {
       try {
         const Ctor = window.AudioContext ??
           (window as unknown as Record<string, typeof AudioContext>)
-            .webkitAudioContext;
+            ['webkitAudioContext'];
 
         if (!Ctor) return;
 

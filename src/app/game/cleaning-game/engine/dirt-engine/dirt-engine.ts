@@ -7,6 +7,16 @@ import { DirtType } from "../../../models/dirt-type";
 export interface CleaningResult {
   changed: boolean;
   removed: number;
+
+  // Somme des distances (en pixels du tampon) de chaque pixel
+  // réellement nettoyé au centre du pinceau. divisée par le
+  // nombre de pixels touchés, cela donne la distance moyenne
+  // des « accroches » : utilisée pour placer les éclaboussures
+  // sur l'anneau extérieur du pinceau plutôt qu'en son centre.
+  touchedWeightedDistance: number;
+
+  // Nombre de pixels effectivement modifiés pendant l'opération.
+  touchedPixels: number;
 }
 
 /**
@@ -399,6 +409,8 @@ getRewardPerUnit(): number {
     const maxY = Math.min(this.bufferHeight - 1, Math.ceil(centerY + radius));
 
     let removed = 0;
+    let touchedWeightedDistance = 0;
+    let touchedPixels = 0;
 
     const dirtCount = this.dirtTypes.length;
 
@@ -478,6 +490,11 @@ getRewardPerUnit(): number {
             layer[pixelIndex] = newAmount;
 
             removed += amount - newAmount;
+
+            // Mémorise où l'accroche s'est produite (distance au
+            // centre du pinceau) pour placer les éclaboussures.
+            touchedWeightedDistance += distance;
+            touchedPixels++;
           }
 
           // La prochaine salissure présente sera plus profonde.
@@ -488,7 +505,9 @@ getRewardPerUnit(): number {
 
     return {
       changed: removed > 0,
-      removed
+      removed,
+      touchedWeightedDistance,
+      touchedPixels
     };
   }
 
@@ -714,7 +733,8 @@ getRewardPerUnit(): number {
   /**
    * Retourne la quantité de salissure encore présente dans un
    * rectangle de la carte (coordonnées logiques), exprimée en
-   * pourcentage de la quantité initiale totale.
+   * **pourcentage de la salissure initialement contenue dans ce
+   * même rectangle** (0 = zone impeccable, 100 = zone intacte).
    *
    * Utilisé par l'onde de propreté : seules les zones où il reste
    * plus de 20 % de salissure sont mises en évidence — jamais un
@@ -745,6 +765,7 @@ getRewardPerUnit(): number {
     );
 
     let sum = 0;
+    let capacity = 0;
 
     for (const layer of this.layers) {
 
@@ -754,11 +775,17 @@ getRewardPerUnit(): number {
 
         for (let x = minX; x <= maxX; x++) {
           sum += layer[rowOffset + x];
+          capacity += 255;
         }
       }
     }
 
-    return (sum / this.initialAmount) * 100;
+    // Dénominateur local à la zone : une petite zone presque
+    // propre affiche un pourcentage proche de 0, indépendamment
+    // de sa taille relative sur la carte.
+    if (capacity <= 0) return 0;
+
+    return (sum / capacity) * 100;
   }
 
   // --------------------------------

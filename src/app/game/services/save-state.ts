@@ -181,12 +181,23 @@ export class SaveState {
     if (
       typeof data !== 'object' ||
       data === null ||
-      (data as SaveData).version !== SaveState.SAVE_VERSION
+      typeof (data as SaveData).version !== 'number'
     ) {
       return null;
     }
 
     const save = data as SaveData;
+
+    // Version plus récente que le jeu : incompatible, on ignore
+    // plutôt que de risquer d'écraser des données futures.
+    if (save.version > SaveState.SAVE_VERSION) {
+      return null;
+    }
+
+    // Les versions plus anciennes (v1 : argent, outils, cartes)
+    // sont migrées en douceur : les champs nouveaux prendront
+    // simplement leur valeur par défaut à l'assainissement ci-
+    // dessous, la progression existante est conservée.
 
     // Assainissement : on ne fait confiance à aucun champ lu.
     return {
@@ -211,7 +222,57 @@ export class SaveState {
       upgradeInventory: this.sanitizeUpgrades(
         save.upgradeInventory
       ),
+
+      mapRecords: this.sanitizeMapRecords(save.mapRecords),
+
+      audioMuted:
+        typeof save.audioMuted === 'boolean'
+          ? save.audioMuted
+          : DEFAULT_SAVE.audioMuted,
     };
+  }
+
+  /**
+   * Ne conserve que les records bien formés (temps positif fini,
+   * étoiles entre 1 et 3) pour des cartes existantes.
+   */
+  private sanitizeMapRecords(raw: unknown): Record<string, MapRecord> {
+
+    const result: Record<string, MapRecord> = {};
+
+    if (typeof raw !== 'object' || raw === null) {
+      return result;
+    }
+
+    for (const [mapId, record] of Object.entries(raw)) {
+
+      if (
+        !GAME_MAPS.some(map => map.id === mapId) ||
+        typeof record !== 'object' ||
+        record === null
+      ) {
+        continue;
+      }
+
+      const time = (record as MapRecord).bestTimeMs;
+      const stars = (record as MapRecord).stars;
+
+      if (
+        typeof time !== 'number' ||
+        !isFinite(time) ||
+        time <= 0 ||
+        typeof stars !== 'number' ||
+        !Number.isInteger(stars) ||
+        stars < 1 ||
+        stars > 3
+      ) {
+        continue;
+      }
+
+      result[mapId] = { bestTimeMs: Math.round(time), stars };
+    }
+
+    return result;
   }
 
   /**
