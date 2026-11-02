@@ -32,6 +32,61 @@
   font-size: 24px;
 }
 
+.title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.shortcut-hint {
+  font-size: 11px;
+  color: #a49a89;
+}
+
+.shortcut-hint kbd,
+.pause-hint kbd {
+  padding: 1px 5px;
+
+  border: 1px solid #d8cfbc;
+  border-radius: 4px;
+
+  background: #fffaf0;
+
+  font-family: inherit;
+  font-size: 10px;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.icon-button {
+  width: 40px;
+  height: 40px;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  border: 1px solid #e5dcca;
+  border-radius: 10px;
+
+  background: #fffaf0;
+
+  font-size: 17px;
+  cursor: pointer;
+
+  transition:
+    background 0.2s,
+    transform 0.1s;
+}
+
+.icon-button:hover {
+  background: #fff6e2;
+  transform: translateY(-1px);
+}
+
 .game-header span,
 .progress-info span {
   color: #898173;
@@ -129,6 +184,10 @@
 
   border-radius: 5px;
 
+  /* Curseur système masqué : un anneau dessiné sur le canvas
+     montre le rayon réel de l'outil (voir drawFrame()). Sur
+     tactile, le doigt tient lieu de curseur — l'anneau suit
+     le pointeur, la flèche OS n'a rien à faire ici. */
   cursor: none;
   touch-action: none;
   user-select: none;
@@ -280,6 +339,98 @@
     flex-direction: column;
     align-items: flex-start;
     gap: 10px;
+  }
+}
+
+/* --------------------------------
+   Écran de pause (par-dessus le jeu)
+-------------------------------- */
+
+.pause-overlay {
+  position: absolute;
+  inset: 0;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  /* Léger flou : la carte reste visible, mais l'attention
+     se porte sur le menu. */
+  background: rgba(20, 18, 12, 0.45);
+  backdrop-filter: blur(2px);
+  border-radius: 10px;
+
+  z-index: 9;
+}
+
+.pause-panel {
+  width: min(360px, 90%);
+
+  padding: 26px 28px;
+
+  background: #fffdf7;
+  border: 1px solid #e5dcca;
+  border-radius: 16px;
+
+  box-shadow: 0 12px 40px rgba(30, 25, 10, 0.35);
+
+  text-align: center;
+}
+
+.pause-panel h2 {
+  margin: 0 0 18px;
+
+  color: #625d53;
+  font-size: 24px;
+}
+
+.pause-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.pause-actions button {
+  padding: 12px 10px;
+
+  border: none;
+  border-radius: 10px;
+
+  background: #e8e1d4;
+  color: #625d53;
+
+  font-weight: bold;
+  cursor: pointer;
+
+  transition:
+    background 0.2s,
+    transform 0.1s;
+}
+
+.pause-actions button:hover {
+  background: #ddd4c2;
+  transform: translateY(-1px);
+}
+
+.pause-actions button.primary {
+  background: #78a887;
+  color: white;
+}
+
+.pause-actions button.primary:hover {
+  background: #6a9a79;
+}
+
+.pause-hint {
+  margin: 16px 0 0;
+
+  color: #898173;
+  font-size: 12px;
+}
+
+@media (max-width: 600px) {
+  .pause-actions {
+    grid-template-columns: 1fr;
   }
 }
 

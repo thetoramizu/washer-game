@@ -2,15 +2,43 @@
 
   <header class="game-header">
 
-    <div>
+    <div class="title-block">
       <h1>{{ activeMap().name }}</h1>
       <span>Frotte les salissures pour nettoyer la surface</span>
+      <span class="shortcut-hint">
+        Raccourcis : <kbd>Échap</kbd>/<kbd>P</kbd> pause ·
+        <kbd>R</kbd> recommencer · <kbd>M</kbd> son ·
+        <kbd>1</kbd>–<kbd>6</kbd> outils
+      </span>
     </div>
 
     <div class="progress-info">
       <span>Propreté</span>
       <strong>{{ progress() | number:'1.0-0' }} %</strong>
     </div>
+
+    <nav class="header-actions">
+
+      <button
+        type="button"
+        class="icon-button"
+        [attr.aria-pressed]="gamingState.soundEnabled()"
+        [title]="gamingState.soundEnabled() ? 'Couper le son (M)' : 'Activer le son (M)'"
+        (click)="toggleSound()"
+      >
+        {{ gamingState.soundEnabled() ? '🔊' : '🔇' }}
+      </button>
+
+      <button
+        type="button"
+        class="icon-button"
+        title="Pause (Échap)"
+        (click)="togglePause()"
+      >
+        ⏸
+      </button>
+
+    </nav>
 
   </header>
 
@@ -38,6 +66,66 @@
       #gameCanvas
       class="game-canvas"
     ></canvas>
+
+    <!-- Écran de pause : le jeu (RAF) tourne encore mais aucun
+         nettoyage n'est appliqué tant que paused() est vrai. -->
+    @if (paused() && !victoryMenuOpen()) {
+
+      <div class="pause-overlay">
+
+        <div class="pause-panel">
+
+          <h2>⏸ Pause</h2>
+
+          <nav class="pause-actions">
+
+            <button
+              type="button"
+              class="primary"
+              (click)="closePause()"
+            >
+              Reprendre
+            </button>
+
+            <button
+              type="button"
+              (click)="resetGame()"
+            >
+              Recommencer
+            </button>
+
+            <button
+              type="button"
+              (click)="goMaps()"
+            >
+              Changer de carte
+            </button>
+
+            <button
+              type="button"
+              (click)="goShop()"
+            >
+              Boutique
+            </button>
+
+            <button
+              type="button"
+              (click)="goMenu()"
+            >
+              Menu principal
+            </button>
+
+          </nav>
+
+          <p class="pause-hint">
+            Astuce : <kbd>Échap</kbd> ou <kbd>P</kbd> pour reprendre.
+          </p>
+
+        </div>
+
+      </div>
+
+    }
 
     <!-- Menu de victoire : s'affiche par-dessus le jeu dès que
          la récompense est obtenue. Le jeu est en pause tant que
