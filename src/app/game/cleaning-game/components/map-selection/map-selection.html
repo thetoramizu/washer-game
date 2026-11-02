@@ -14,89 +14,110 @@
 
   </header>
 
-  <section class="map-grid">
+  <!-- Les cartes sont regroupées par monde : chaque monde
+       possède sa propre ambiance (peinture, extérieur, nuit…). -->
+  @for (world of worlds; track world.id) {
 
-    @for (map of maps; track map.id) {
+    <section class="world-section">
 
-      <article class="map-card">
+      <header
+        class="world-header"
+        [style.border-color]="world.color"
+      >
+        <h2>
+          <span class="world-icon">{{ world.icon }}</span>
+          {{ world.name }}
+        </h2>
+        <p>{{ world.description }}</p>
+      </header>
 
-        <!-- Illustration provisoire de la carte -->
-        <div
-          class="map-preview"
-          [style.background]="map.previewColor"
-        >
-          <span>{{ map.name }}</span>
-        </div>
+      <div class="map-grid">
 
-        <div class="map-content">
+        @for (map of mapsOfWorld(world.id); track map.id) {
 
-          <h2>{{ map.name }}</h2>
+          <article class="map-card">
 
-          <span
-            class="difficulty"
-            [class.easy]="map.difficulty === 'easy'"
-            [class.medium]="map.difficulty === 'medium'"
-            [class.hard]="map.difficulty === 'hard'"
-          >
-            {{ getDifficultyLabel(map.difficulty) }}
-          </span>
-
-          <p class="description">
-            {{ map.description }}
-          </p>
-
-          <div class="map-info">
-
-            <span>
-              Dimensions
-            </span>
-
-            <strong>
-              {{ map.width }} × {{ map.height }}
-            </strong>
-
-          </div>
-
-          <div class="map-info">
-
-            <span>
-              Salissures
-            </span>
-
-            <strong>
-              {{ Object.keys(map.dirtDensity).join(', ') }}
-            </strong>
-
-          </div>
-
-          @if (gamingState.isMapUnlocked(map.id)) {
-
-            <button
-              class="play-button"
-              (click)="playMap(map)"
+            <!-- Illustration provisoire de la carte -->
+            <div
+              class="map-preview"
+              [style.background]="map.previewColor"
             >
-              Jouer
-            </button>
+              <span>{{ map.name }}</span>
+            </div>
 
-          } @else {
+            <div class="map-content">
 
-            <button
-              class="unlock-button"
-              [disabled]="gamingState.money() < map.unlockPrice"
-              (click)="unlockMap(map)"
-            >
-              Débloquer · {{ map.unlockPrice }} $
-            </button>
+              <h2>{{ map.name }}</h2>
 
-          }
+              <span
+                class="difficulty"
+                [class.easy]="map.difficulty === 'easy'"
+                [class.medium]="map.difficulty === 'medium'"
+                [class.hard]="map.difficulty === 'hard'"
+              >
+                {{ getDifficultyLabel(map.difficulty) }}
+              </span>
 
-        </div>
+              <p class="description">
+                {{ map.description }}
+              </p>
 
-      </article>
+              <div class="map-info">
 
-    }
+                <span>
+                  Dimensions
+                </span>
 
-  </section>
+                <strong>
+                  {{ map.width }} × {{ map.height }}
+                </strong>
+
+              </div>
+
+              <div class="map-info">
+
+                <span>
+                  Salissures
+                </span>
+
+                <strong>
+                  {{ Object.keys(map.dirtDensity).join(', ') }}
+                </strong>
+
+              </div>
+
+              @if (gamingState.isMapUnlocked(map.id)) {
+
+                <button
+                  class="play-button"
+                  (click)="playMap(map)"
+                >
+                  Jouer
+                </button>
+
+              } @else {
+
+                <button
+                  class="unlock-button"
+                  [disabled]="gamingState.money() < map.unlockPrice"
+                  (click)="unlockMap(map)"
+                >
+                  Débloquer · {{ map.unlockPrice }} $
+                </button>
+
+              }
+
+            </div>
+
+          </article>
+
+        }
+
+      </div>
+
+    </section>
+
+  }
 
   <footer>
     <button class="back-button" (click)="goBack()">

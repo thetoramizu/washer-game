@@ -1,3 +1,4 @@
+import { SurfaceStyle } from './game-world';
 
 /**
  * Configuration d'une carte du jeu.
@@ -6,6 +7,10 @@ export interface GameMap {
 
   // Identifiant unique.
   id: string;
+
+  // Identifiant du monde auquel appartient la carte
+  // (voir GAME_WORLDS).
+  worldId: string;
 
   // Nom affiché dans les menus.
   name: string;
@@ -32,4 +37,9 @@ export interface GameMap {
 
   // Couleur provisoire de l'illustration.
   previewColor: string;
+
+  // Style de la surface propre dessinée en fond de carte.
+  // C'est lui qui donne son ambiance au monde
+  // (dalles, toile, asphalte, nuit…).
+  surfaceStyle: SurfaceStyle;
 }
