@@ -150,9 +150,15 @@ export class DirtEngine {
    * volontairement élevée pour que les gains restent cohérents
    * avec les prix de la boutique (une centaine de dollars par
    * carte au niveau de base). Elle sert aussi de diviseur pour
-   * la récompense de fin de carte, calculée dans l'écran de jeu.
+   * la récompense de fin de carte (voir computeMapReward).
    */
   static readonly DIRT_UNITS_PER_DOLLAR = 25000;
+
+  /**
+   * Récompense minimale garantie en $ à la validation d'une
+   * carte, quelle que soit sa taille (petites cartes incluses).
+   */
+  static readonly MINIMUM_MAP_REWARD = 25;
 
   // Tampon interne et son contexte, utilisés pour le rendu
   // basse résolution puis l'agrandissement sur le canvas.
@@ -635,6 +641,21 @@ export class DirtEngine {
    */
   isComplete(): boolean {
     return this.getProgress() >= COMPLETION_THRESHOLD;
+  }
+
+  /**
+   * Récompense en $ accordée quand la carte est validée.
+   *
+   * Elle est plafonnée par la taille réelle de la carte :
+   * environ 1 $ pour DIRT_UNITS_PER_DOLLAR unités de salissure
+   * présentes au départ, avec un minimum garanti pour que les
+   * petites cartes restent intéressantes (cohérent avec des
+   * améliorations à partir de 100 $).
+   */
+  computeMapReward(): number {
+    const proportionalReward = this.initialAmount / DirtEngine.DIRT_UNITS_PER_DOLLAR;
+
+    return Math.max(DirtEngine.MINIMUM_MAP_REWARD, Math.round(proportionalReward));
   }
 
   // --------------------------------
