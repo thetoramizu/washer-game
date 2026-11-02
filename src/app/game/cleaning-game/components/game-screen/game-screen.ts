@@ -4,6 +4,7 @@ import {
   ElementRef,
   inject,
   OnDestroy,
+  computed,
   signal,
   ViewChild,
 } from '@angular/core';
@@ -14,6 +15,34 @@ import { GAME_MAPS } from '../../../models/game-maps.data';
 import { GamingState } from '../../../services/gaming-state';
 import { CleaningTool } from '../../../models/cleaning-tool';
 import { DecimalPipe } from '@angular/common';
+
+/**
+ * Particule éphémère dessinée par la boucle d'animation :
+ * gouttelette de salissure, éclat doré de gain ou confetti.
+ */
+interface Particle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  maxLife: number;
+  size: number;
+  color: string;
+  kind: 'spray' | 'spark' | 'confetti';
+}
+
+/**
+ * Emoji représentatif de chaque outil, dessiné sur le curseur.
+ */
+const TOOL_EMOJIS: Record<string, string> = {
+  sponge: '🧽',
+  brush: '🪥',
+  scraper: '🪟',
+  'pressure-washer': '💦',
+  'steam-cleaner': '♨️',
+  overpowered: '⚡',
+};
 
 /**
  * Écran de jeu : canvas, nettoyage et barre d'outils.
@@ -140,8 +169,38 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   // aucun mécanisme de change detection à chaque mouvement.
   private detachPointerListeners?: () => void;
 
-  // Gains accumulés pendant la partie en cours.
+  // Gains accumulés pendant la partie en cours (valeur exacte,
+  // utilisée pour le plafond de récompense éventuel).
   private earnedMoney = 0;
+
+  // Même valeur exposée à la vue : mise à jour throttlée depuis
+  // la boucle de rendu (jamais dans les écouteurs du pointeur).
+  readonly sessionEarnings = signal(0);
+
+  // Horodatage de la dernière remontée des gains de session.
+  private lastEarningsPush = 0;
+
+  // Libellé d'affichage des gains de session (+X $ sous le %.).
+  readonly sessionEarningsLabel = computed(() => {
+    const earned = Math.floor(this.sessionEarnings());
+    return earned > 0 ? `+${earned} $` : '';
+  });
+
+  /**
+   * Particules visuelles « juice » : gouttelettes projetées quand
+   * on frotte, éclats dorés quand un gain est accumulé, pluie de
+   * confettis à la victoire. Elles vivent uniquement dans la boucle
+   * d'animation (aucun signal par particule).
+   */
+  private particles: Particle[] = [];
+
+  // Curseur adouci (interpolation) pour le rendu de l'outil :
+  // donne un effet « vivant » au halo et à l'emoji de l'outil.
+  private renderCursorX = -100;
+  private renderCursorY = -100;
+
+  // Petit tremblement du halo la nuit (lanterne vivante).
+  private flickerPhase = 0;
 
   // Récompense versée à la fin de la partie.
   readonly mapReward = signal(0);
@@ -427,8 +486,10 @@ export class GameScreen implements AfterViewInit, OnDestroy {
 
     // Réinitialise les gains de la partie.
     this.earnedMoney = 0;
+    this.sessionEarnings.set(0);
     this.mapReward.set(0);
     this.progress.set(0);
+    this.particles.length = 0;
 
     // Affichage initial, puis boucle de rendu continue :
     // le canvas n'est dessiné qu'ici, jamais dans les écouteurs.
@@ -893,6 +954,16 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   onPointerUp(): void {
     this.isCleaning = false;
     this.lastCleanTime = 0;
+
+    // Éclat doré au relâchement : petit rappel visuel des gains
+    // accumulés pendant ce passage de pinceau.
+    if (this.earnedMoney > 0) {
+      this.spawnMoneySpark();
+    }
+
+    // Retour haptique léger sur les appareils qui le supportent.
+    this.vibrate(10);
+
     this.updateProgress();
   }
 
@@ -963,8 +1034,22 @@ export class GameScreen implements AfterViewInit, OnDestroy {
     // Accumule les gains selon les salissures retirées.
     // L'économie est centralisée dans le moteur.
     if (result.removed > 0) {
-      this.earnedMoney +=
+      const gained =
         result.removed * this.dirtEngine.getRewardPerUnit();
+
+      this.earnedMoney += gained;
+
+      // Gouttelettes de salissure arrachée sous le pinceau.
+      this.spawnDirtSpray(result.removed, tool.radius);
+
+      // Remontée throttlée vers la vue (le calcul des gains a lieu
+      // hors change detection : seul ce signal traverse la vue).
+      const now = performance.now();
+
+      if (now - this.lastEarningsPush >= 250) {
+        this.lastEarningsPush = now;
+        this.sessionEarnings.set(Math.floor(this.earnedMoney));
+      }
     }
   }
 
@@ -1010,6 +1095,10 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       if (this.isCleaning) {
         this.applyDirtyDelta();
       }
+
+      // Les particules avancent à chaque image (mouvement,
+      // gravité, disparition) puis sont dessinées dans drawFrame.
+      this.updateParticles();
 
       this.drawFrame();
 
@@ -1067,17 +1156,28 @@ export class GameScreen implements AfterViewInit, OnDestroy {
     // carte replonge dans le noir.
     if (this.isNightWorld) {
 
+      // Halo animé : léger tremblement de lanterne pour un
+      // rendu vivant plutôt qu'un masque statique.
+      this.flickerPhase += 0.05;
+
+      const flickerX = Math.sin(this.flickerPhase) * 2;
+      const flickerY = Math.cos(this.flickerPhase * 0.7) * 1.5;
+
+      const lightX = this.pointerInside
+        ? this.renderCursorX + flickerX
+        : this.canvas.width / 2;
+
+      const lightY = this.pointerInside
+        ? this.renderCursorY + flickerY
+        : this.canvas.height / 2;
+
       this.dirtEngine.renderWithFlashlight(
         this.ctx,
         this.cleanImage,
         this.canvas.width,
         this.canvas.height,
-        this.pointerInside && tool
-          ? this.pointerX
-          : this.canvas.width / 2,
-        this.pointerInside && tool
-          ? this.pointerY
-          : this.canvas.height / 2,
+        lightX,
+        lightY,
         tool?.radius ?? 40,
         this.WIDTH
       );
@@ -1092,40 +1192,288 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       );
     }
 
+    // Curseur « outil » : anneau doux + emoji de l'outil qui suit
+    // le pointeur avec une légère inertie (renderCursor interpolé).
     if (this.pointerInside && tool) {
 
-      // Le rayon de l'outil est exprimé en unités carte :
-      // on le convertit à l'échelle du canvas.
+      // Interpolation du curseur vers le pointeur réel : effet
+      // vivant, et l'anneau garde la trace du mouvement.
+      this.renderCursorX +=
+        (this.pointerX - this.renderCursorX) * 0.35;
+
+      this.renderCursorY +=
+        (this.pointerY - this.renderCursorY) * 0.35;
+
       const radiusOnCanvas =
         tool.radius * (this.canvas.width / this.WIDTH);
 
-      this.ctx.beginPath();
+      const ctx = this.ctx;
 
-      this.ctx.arc(
-        this.pointerX,
-        this.pointerY,
+      // Anneau extérieur blanc semi-transparent.
+      ctx.beginPath();
+      ctx.arc(
+        this.renderCursorX,
+        this.renderCursorY,
         radiusOnCanvas,
         0,
         Math.PI * 2
       );
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
 
-      this.ctx.strokeStyle = '#ffffff';
-      this.ctx.lineWidth = 2;
-      this.ctx.stroke();
-
-      // Petit point central.
-      this.ctx.beginPath();
-
-      this.ctx.arc(
-        this.pointerX,
-        this.pointerY,
-        3,
+      // Léger remplissage pour matérialiser la zone couverte.
+      ctx.beginPath();
+      ctx.arc(
+        this.renderCursorX,
+        this.renderCursorY,
+        radiusOnCanvas,
         0,
         Math.PI * 2
       );
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.06)';
+      ctx.fill();
 
-      this.ctx.fillStyle = '#ffffff';
-      this.ctx.fill();
+      // Emoji de l'outil, incliné selon la direction du mouvement.
+      const dx = this.pointerX - this.renderCursorX;
+      const tilt = Math.max(
+        -0.35,
+        Math.min(0.35, dx * 0.01)
+      );
+
+      const emoji = TOOL_EMOJIS[tool.id] ?? '🧽';
+      const fontSize = Math.max(
+        16,
+        Math.min(44, radiusOnCanvas * 0.9)
+      );
+
+      ctx.save();
+      ctx.translate(
+        this.renderCursorX,
+        this.renderCursorY
+      );
+      ctx.rotate(tilt);
+      ctx.font = `${fontSize}px serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      // Ombre portée pour rester lisible sur toute surface.
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.35)';
+      ctx.shadowBlur = 6;
+
+      ctx.fillText(emoji, 0, 0);
+      ctx.restore();
+    }
+
+    // Les particules se dessinent par-dessus la scène.
+    this.drawParticles();
+  }
+
+  // --------------------------------
+  // Particules & retours sensoriels
+  // --------------------------------
+
+  /**
+   * Limite haute du nombre de particules simultanées : au-delà,
+   * on ignore les nouvelles émissions (la scène reste fluide même
+   * avec un outil au très grand rayon).
+   */
+  private static readonly MAX_PARTICLES = 260;
+
+  /**
+   * Projette quelques gouttelettes colorées autour du pinceau :
+   * la couleur est prélevée sur la salissure réellement retirée.
+   */
+  private spawnDirtSpray(removed: number, toolRadius: number): void {
+
+    if (!this.dirtEngine) return;
+
+    const count = Math.min(4, 1 + Math.floor(removed / 900));
+
+    const mapX = this.pointerX * (this.WIDTH / this.canvas.width);
+    const mapY = this.pointerY * (this.HEIGHT / this.canvas.height);
+
+    const color = this.dirtEngine.sampleDirtColor(mapX, mapY);
+
+    const canvasScale = this.canvas.width / this.WIDTH;
+
+    for (let i = 0; i < count; i++) {
+
+      if (this.particles.length >= GameScreen.MAX_PARTICLES) return;
+
+      // Éjection en anneau, autour du bord du pinceau.
+      const angle = Math.random() * Math.PI * 2;
+
+      const speed =
+        (30 + Math.random() * 70) * canvasScale;
+
+      const distance =
+        toolRadius * (0.55 + Math.random() * 0.45) * canvasScale;
+
+      this.particles.push({
+        x: this.renderCursorX + Math.cos(angle) * distance,
+        y: this.renderCursorY + Math.sin(angle) * distance,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 40 * canvasScale,
+        life: 0,
+        maxLife: 0.35 + Math.random() * 0.3,
+        size: (1.5 + Math.random() * 2.5) * canvasScale,
+        color: color
+          ? `rgba(${color.r}, ${color.g}, ${color.b}, 0.85)`
+          : 'rgba(255, 255, 255, 0.5)',
+        kind: 'spray',
+      });
+    }
+  }
+
+  /**
+   * Éclats dorés au relâchement du pinceau : rappel visuel que
+   * le frottement rapporte de l'argent.
+   */
+  private spawnMoneySpark(): void {
+
+    const canvasScale = this.canvas.width / this.WIDTH;
+
+    for (let i = 0; i < 6; i++) {
+
+      if (this.particles.length >= GameScreen.MAX_PARTICLES) return;
+
+      const angle = Math.random() * Math.PI * 2;
+      const speed = (20 + Math.random() * 40) * canvasScale;
+
+      this.particles.push({
+        x: this.renderCursorX,
+        y: this.renderCursorY,
+        vx: Math.cos(angle) * speed,
+        vy: -Math.abs(Math.sin(angle) * speed) - 30 * canvasScale,
+        life: 0,
+        maxLife: 0.5 + Math.random() * 0.3,
+        size: (2 + Math.random() * 2) * canvasScale,
+        color: 'rgba(255, 205, 90, 0.95)',
+        kind: 'spark',
+      });
+    }
+  }
+
+  /**
+   * Pluie de confettis à la validation d'une carte.
+   */
+  private spawnConfetti(): void {
+
+    const palette = [
+      '#f2c14e',
+      '#78a887',
+      '#e88b5a',
+      '#8fbcd4',
+      '#c589d0',
+    ];
+
+    for (let i = 0; i < 90; i++) {
+
+      this.particles.push({
+        x: Math.random() * this.canvas.width,
+        y: -10 - Math.random() * this.canvas.height * 0.5,
+        vx: (Math.random() - 0.5) * 60,
+        vy: 60 + Math.random() * 120,
+        life: 0,
+        maxLife: 1.6 + Math.random() * 1.2,
+        size: 2 + Math.random() * 3,
+        color: palette[Math.floor(Math.random() * palette.length)],
+        kind: 'confetti',
+      });
+    }
+  }
+
+  /**
+   * Fait avancer toutes les particules (gravité légère, vie).
+   *
+   * Appelé une fois par image depuis la boucle d'animation ;
+   * aucun signal n'est touché ici.
+   */
+  private updateParticles(): void {
+
+    let write = 0;
+
+    for (let i = 0; i < this.particles.length; i++) {
+
+      const particle = this.particles[i];
+
+      particle.life += 1 / 60;
+
+      if (particle.life >= particle.maxLife) continue;
+
+      particle.x += particle.vx / 60;
+      particle.y += particle.vy / 60;
+
+      // Gravité et traînée selon le type.
+      if (particle.kind === 'spray') {
+        particle.vy += 260 / 60;
+      } else if (particle.kind === 'spark') {
+        particle.vy += 120 / 60;
+      } else {
+        // Confettis : chute lente et virevoltement.
+        particle.vx += Math.sin(particle.life * 8 + particle.y) * 0.4;
+      }
+
+      this.particles[write++] = particle;
+    }
+
+    this.particles.length = write;
+  }
+
+  /**
+   * Dessine les particules actives, fondues selon leur âge.
+   */
+  private drawParticles(): void {
+
+    if (this.particles.length === 0) return;
+
+    const ctx = this.ctx;
+
+    ctx.save();
+
+    for (const particle of this.particles) {
+
+      const fade = 1 - particle.life / particle.maxLife;
+
+      ctx.globalAlpha = Math.max(0, Math.min(1, fade));
+      ctx.fillStyle = particle.color;
+
+      if (particle.kind === 'confetti') {
+        ctx.fillRect(
+          particle.x,
+          particle.y,
+          particle.size,
+          particle.size * 1.6
+        );
+      } else {
+        ctx.beginPath();
+        ctx.arc(
+          particle.x,
+          particle.y,
+          particle.size,
+          0,
+          Math.PI * 2
+        );
+        ctx.fill();
+      }
+    }
+
+    ctx.restore();
+  }
+
+  /**
+   * Retour haptique sur les appareils qui le supportent
+   * (mobiles). Aucun effet ailleurs — c'est un bonus.
+   */
+  private vibrate(pattern: number | number[]): void {
+
+    if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+      try {
+        navigator.vibrate(pattern);
+      } catch {
+        // Non critique : certains navigateurs bloquent la vibration.
+      }
     }
   }
 
@@ -1178,6 +1526,16 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       this.mapReward.set(reward);
       this.gamingState.addMoney(reward);
 
+      // Mémorise la carte comme terminée (badge ✓ dans la
+      // sélection de cartes — la donnée est auto-sauvegardée).
+      this.gamingState.markMapCompleted(this.activeMap().id);
+
+      // Pluie de confettis dorés/verts sur toute la surface.
+      this.spawnConfetti();
+
+      // Secousse haptique de victoire sur mobile.
+      this.vibrate([30, 40, 60]);
+
       // Le menu de victoire s'affiche par-dessus le jeu.
       this.victoryMenuOpen.set(true);
     }
@@ -1199,8 +1557,10 @@ export class GameScreen implements AfterViewInit, OnDestroy {
 
     this.progress.set(0);
     this.earnedMoney = 0;
+    this.sessionEarnings.set(0);
     this.mapReward.set(0);
     this.victoryMenuOpen.set(false);
+    this.particles.length = 0;
 
     this.lastCleanTime = 0;
     this.lastProgressUpdate = performance.now();

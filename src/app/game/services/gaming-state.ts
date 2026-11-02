@@ -1,11 +1,12 @@
 
-import { Service, signal } from '@angular/core';
+import { Injectable, computed, effect, inject, signal } from '@angular/core';
 
 import { GameMap } from '../models/game-map';
 import { CleaningTool, ToolUpgradeType } from '../models/cleaning-tool';
 import { CLEANING_TOOLS } from '../models/cleaning-tools.data';
 import { ToolUpgradeInventory } from '../models/tool-upgrade';
 import { TOOL_UPGRADES } from '../models/tool-upgrades-data';
+import { SaveData, SaveState } from './save-state';
 
 /**
  * Écrans disponibles dans le jeu.
@@ -16,10 +17,71 @@ export type GameScreen =
   | 'tool-shop'
   | 'game';
 
-@Service()
+@Injectable({ providedIn: 'root' })
 export class GamingState {
 
-    
+  private readonly saveState = inject(SaveState);
+
+  constructor() {
+
+    // Restaure la progression sauvegardée (si elle existe) :
+    // les données ont été validées et assainies à la lecture.
+    this.saveState.registerApplier(save => this.applySave(save));
+
+    // Auto-sauvegarde : dès qu'une donnée persistable change
+    // (argent, outils, améliorations, cartes débloquées ou
+    // terminées), l'instantané est réécrit sur le support.
+    effect(() => {
+      this.saveState.write(this.snapshot());
+    });
+  }
+
+  /**
+   * Instantané des données persistables de l'état du jeu.
+   */
+  snapshot(): Omit<SaveData, 'version' | 'savedAt'> {
+    return {
+      money: this.money(),
+      ownedTools: this.ownedTools(),
+      equippedToolId: this.equippedToolId(),
+      unlockedMaps: this.unlockedMaps(),
+      upgradeInventory: this.upgradeInventory(),
+      completedMaps: this.completedMaps(),
+    };
+  }
+
+  /**
+   * Applique une sauvegarde validée aux signaux de l'état.
+   */
+  private applySave(save: SaveData): void {
+
+    this.money.set(save.money);
+    this.ownedTools.set(save.ownedTools);
+    this.equippedToolId.set(save.equippedToolId);
+    this.unlockedMaps.set(save.unlockedMaps);
+    this.completedMaps.set(save.completedMaps);
+    this.upgradeInventory.set(save.upgradeInventory);
+  }
+
+  /**
+   * Efface la sauvegarde et recharge l'état par défaut d'un
+   * nouveau joueur.
+   */
+  resetProgress(): void {
+
+    this.saveState.deleteSave();
+
+    this.money.set(250);
+    this.ownedTools.set(['sponge', 'brush']);
+    this.equippedToolId.set('sponge');
+    this.unlockedMaps.set(['terrace', 'attic-painting']);
+    this.completedMaps.set([]);
+    this.upgradeInventory.set({
+      sponge: { radius: 0, power: 0, efficiency: 0, penetration: 0 },
+      brush: { power: 0, efficiency: 0, penetration: 0 },
+    });
+  }
+
   // --------------------------------
   // Catalogue des outils
   // --------------------------------
@@ -213,6 +275,24 @@ unlockMap(map: GameMap): boolean {
   ]);
 
   return true;
+}
+
+/**
+ * Cartes déjà terminées au moins une fois (badge ✓ dans la
+ * sélection de cartes ; récompense complète versée à chaque
+ * revalidation de la carte).
+ */
+readonly completedMaps = signal<string[]>([]);
+
+isMapCompleted(mapId: string): boolean {
+  return this.completedMaps().includes(mapId);
+}
+
+markMapCompleted(mapId: string): void {
+
+  if (this.isMapCompleted(mapId)) return;
+
+  this.completedMaps.update(maps => [...maps, mapId]);
 }
 
 

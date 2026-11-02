@@ -573,6 +573,60 @@ getRewardPerUnit(): number {
   }
 
   // --------------------------------
+  // Échantillonnage (particules)
+  // --------------------------------
+
+  /**
+   * Échelle du tampon interne : sert aux composants qui doivent
+   * reprojeter des coordonnées carte vers le tampon (particules…).
+   */
+  static get renderScale(): number {
+    return DirtEngine.RENDER_SCALE;
+  }
+
+  /**
+   * Retourne la couleur RGB de la salissure dominante autour d'un
+   * point (coordonnées carte), ou null si la zone est propre.
+   *
+   * Utilisé pour teinter les gouttelettes projetées par le
+   * pinceau : chaque éclaboussure reprend la couleur de ce qu'on
+   * frotte à cet instant.
+   */
+  sampleDirtColor(
+    x: number,
+    y: number
+  ): { r: number; g: number; b: number } | null {
+
+    const scale = DirtEngine.RENDER_SCALE;
+
+    const bx = Math.round(x * scale);
+    const by = Math.round(y * scale);
+
+    if (bx < 0 || by < 0) return null;
+    if (bx >= this.bufferWidth || by >= this.bufferHeight) {
+      return null;
+    }
+
+    const pixelIndex = by * this.bufferWidth + bx;
+
+    let bestAmount = 0;
+    let bestIndex = -1;
+
+    for (let i = 0; i < this.layers.length; i++) {
+      const amount = this.layers[i][pixelIndex];
+
+      if (amount > bestAmount) {
+        bestAmount = amount;
+        bestIndex = i;
+      }
+    }
+
+    if (bestIndex < 0 || bestAmount === 0) return null;
+
+    return this.dirtColors[bestIndex];
+  }
+
+  // --------------------------------
   // Progression
   // --------------------------------
 

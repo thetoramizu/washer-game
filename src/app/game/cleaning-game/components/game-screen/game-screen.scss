@@ -25,6 +25,11 @@
   margin: 0 auto 15px;
 }
 
+.quick-actions,
+.progress-info {
+  flex-shrink: 0;
+}
+
 .game-header h1 {
   margin: 0 0 6px;
 
@@ -189,6 +194,8 @@
 }
 
 .money-display {
+  position: relative;
+
   padding: 12px 22px;
   border-radius: 30px;
 
@@ -197,6 +204,22 @@
 
   color: #a17b3d;
   font-weight: bold;
+}
+
+.completed-badge {
+  margin-left: 8px;
+
+  display: inline-grid;
+  place-items: center;
+
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+
+  background: #dcefe0;
+  color: #52845e;
+
+  font-size: 12px;
 }
 
 /* --------------------------------
@@ -240,35 +263,45 @@
 }
 
 /* --------------------------------
-   Actions
+   Actions rapides (en-tête)
 -------------------------------- */
 
-.game-actions {
+.quick-actions {
   display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-
-  max-width: 1100px;
-  margin: 25px auto 0;
+  gap: 8px;
 }
 
-.game-actions button {
-  padding: 11px 18px;
+.quick-actions button {
+  width: 42px;
+  height: 42px;
 
-  border: none;
-  border-radius: 6px;
+  display: grid;
+  place-items: center;
 
-  background: #e8e1d4;
-  color: #625d53;
+  border: 1px solid #e5dcca;
+  border-radius: 10px;
 
-  font-weight: bold;
+  background: #fffaf0;
+  font-size: 18px;
+
   cursor: pointer;
 
-  transition: background 0.2s;
+  transition:
+    background 0.2s,
+    transform 0.1s;
 }
 
-.game-actions button:hover {
-  background: #ddd4c2;
+.quick-actions button:hover {
+  background: #f2eadc;
+  transform: translateY(-1px);
+}
+
+/* Gains de la session, sous le pourcentage de propreté. */
+.session-earnings {
+  font-style: normal;
+  font-size: 13px;
+  font-weight: 700;
+  color: #a17b3d;
 }
 
 @media (max-width: 600px) {

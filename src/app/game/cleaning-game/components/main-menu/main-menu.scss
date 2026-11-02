@@ -104,3 +104,72 @@ button {
 .money-display strong {
   color: #a17b3d;
 }
+
+/* --------------------------------
+   Sauvegarde
+-------------------------------- */
+
+.save-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  margin-top: 22px;
+  padding: 12px 18px;
+
+  border-radius: 12px;
+  background: #fffaf0;
+  border: 1px solid #e5dcca;
+
+  color: #898173;
+  font-size: 13px;
+  text-align: center;
+}
+
+.save-summary strong {
+  color: #648b70;
+  font-size: 14px;
+}
+
+.save-actions {
+  width: 100%;
+  margin-top: 18px;
+}
+
+.save-actions button {
+  padding: 12px;
+  font-size: 14px;
+}
+
+.danger-button {
+  background: transparent;
+  border: 1px solid #e0b4a8;
+  border-radius: 14px;
+
+  color: #b0563f;
+}
+
+.danger-button:hover {
+  background: #fbeee9;
+}
+
+.danger-button.solid {
+  background: #b0563f;
+  border-color: #b0563f;
+  color: white;
+}
+
+.danger-button.solid:hover {
+  background: #98482f;
+}
+
+.confirm-text {
+  margin: 0 0 10px;
+  color: #898173;
+  font-size: 14px;
+}
+
+.confirm-row {
+  display: flex;
+  gap: 12px;
+}

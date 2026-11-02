@@ -27,10 +27,67 @@
 
     </nav>
 
+    <!-- Résumé de la sauvegarde chargée automatiquement -->
+    @if (saveState.saveSummary(); as summary) {
+
+      <div class="save-summary">
+        <strong>Partie reprise</strong>
+        <span>
+          {{ summary.money }} $ ·
+          {{ summary.ownedToolsCount }} outils ·
+          {{ summary.completedMapsCount }} carte(s) terminée(s) ·
+          sauvegardée le {{ summary.savedAtLabel }}
+        </span>
+      </div>
+
+    }
+
     <div class="money-display">
       <span>Portefeuille</span>
       <strong>{{ gameState.money() }} $</strong>
     </div>
+
+    <!-- Gestion de la sauvegarde -->
+    @if (saveState.hasSave()) {
+
+      <div class="save-actions">
+
+        @if (!confirmDelete()) {
+
+          <button
+            class="danger-button"
+            (click)="confirmDelete.set(true)"
+          >
+            🗑 Supprimer la sauvegarde
+          </button>
+
+        } @else {
+
+          <p class="confirm-text">
+            Effacer définitivement la progression ?
+          </p>
+
+          <div class="confirm-row">
+            <button
+              class="danger-button solid"
+              (click)="deleteSave()"
+            >
+              Oui, tout effacer
+            </button>
+
+            <button
+              class="secondary-button"
+              (click)="cancelDelete()"
+            >
+              Annuler
+            </button>
+          </div>
+
+        }
+
+      </div>
+
+    }
 
   </section>
 

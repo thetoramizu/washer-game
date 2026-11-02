@@ -47,7 +47,12 @@
 
             <div class="map-content">
 
-              <h2>{{ map.name }}</h2>
+              <h2>
+                {{ map.name }}
+                @if (gamingState.isMapCompleted(map.id)) {
+                  <span class="completed-badge" title="Carte déjà terminée">✓</span>
+                }
+              </h2>
 
               <span
                 class="difficulty"

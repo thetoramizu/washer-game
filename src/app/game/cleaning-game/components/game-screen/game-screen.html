@@ -10,7 +10,17 @@
     <div class="progress-info">
       <span>Propreté</span>
       <strong>{{ progress() | number:'1.0-0' }} %</strong>
+      @if (sessionEarningsLabel()) {
+        <em class="session-earnings">{{ sessionEarningsLabel() }} cette partie</em>
+      }
     </div>
+
+    <nav class="quick-actions" aria-label="Actions rapides">
+      <button type="button" (click)="resetGame()" title="Recommencer la carte">↺</button>
+      <button type="button" (click)="goShop()" title="Boutique">🛒</button>
+      <button type="button" (click)="goMaps()" title="Changer de carte">🗺️</button>
+      <button type="button" (click)="goMenu()" title="Menu principal">🏠</button>
+    </nav>
 
   </header>
 
@@ -128,6 +138,9 @@
 
     <div class="money-display">
       {{ gamingState.money() }} $
+      @if (gamingState.isMapCompleted(activeMap().id)) {
+        <span class="completed-badge" title="Carte déjà terminée">✓</span>
+      }
     </div>
 
   </footer>
@@ -154,25 +167,5 @@
     }
 
   </div>
-
-  <nav class="game-actions">
-
-    <button type="button" (click)="resetGame()">
-      Recommencer
-    </button>
-
-    <button type="button" (click)="goShop()">
-      Boutique
-    </button>
-
-    <button type="button" (click)="goMaps()">
-      Changer de carte
-    </button>
-
-    <button type="button" (click)="goMenu()">
-      Menu principal
-    </button>
-
-  </nav>
 
 </main>
