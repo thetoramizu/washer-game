@@ -16,31 +16,17 @@ import { AudioService } from '../../../services/audio-service';
 import { CleaningTool } from '../../../models/cleaning-tool';
 import { DecimalPipe } from '@angular/common';
 import { paintCleanSurface } from './surface-painter';
-
-/**
- * Gouttelette émise sous le curseur pendant le nettoyage :
- * particule physique simple (position, vélocité, durée de vie),
- * dessinée dans la boucle de rendu — jamais via le DOM.
- */
-interface Droplet {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  radius: number;
-  life: number;
-  maxLife: number;
-  color: string;
-}
-
-/**
- * Secousse d'écran : translation aléatoire brève appliquée à
- * tout le canvas (à la victoire, ou en retour tactile léger).
- */
-interface ScreenShake {
-  intensity: number;
-  until: number;
-}
+import { drawCursorRing } from './cursor-renderer';
+import {
+  computeShakeOffset,
+  drawDroplets,
+  Droplet,
+  scatterRecentDroplets,
+  ScreenShake,
+  spawnDroplets,
+  triggerShake,
+  updateDroplets,
+} from './droplets';
 
 /**
  * Écran de jeu : canvas, nettoyage et barre d'outils.
@@ -284,6 +270,9 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   // --------------------------------
   // Particules & secousses d'écran
   // --------------------------------
+  // La simulation et le dessin sont délégués au module pur
+  // `droplets.ts` ; le composant ne conserve que l'état courant
+  // et la garde d'accessibilité « réduction de mouvement ».
 
   // Gouttelettes actives, mises à jour et dessinées par la
   // boucle de rendu (jamais par les événements du pointeur).
@@ -297,103 +286,42 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   private shake: ScreenShake | null = null;
 
   // Respecte le réglage d'accessibilité du système : en
-  // « réduction de mouvement », pas de tremblement d'écran.
+  // « réduction de mouvement », pas de particules ni de
+  // tremblement d'écran.
   private readonly reduceMotion =
     typeof window !== 'undefined' &&
     !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
   /**
-   * Déclenche une secousse d'écran brève.
+   * Déclenche une secousse d'écran brève (inerte si l'utilisateur
+   * demande une réduction des animations).
    *
    * @param intensity Amplitude maximale en pixels canvas.
-   * @param durationDurée en millisecondes.
+   * @param duration Durée en millisecondes.
    */
   private triggerShake(intensity: number, duration: number): void {
 
     if (this.reduceMotion) return;
 
-    this.shake = {
-      intensity,
-      until: performance.now() + duration
-    };
+    triggerShake(this, intensity, duration);
   }
 
   /**
-   * Émet quelques gouttelettes autour du curseur, projetées
-   * vers l'extérieur avec une légère gravité.
+   * Émet quelques gouttelettes autour du curseur (inerte si
+   * l'utilisateur demande une réduction des animations).
    */
-  private spawnDroplets(count: number, color: string): void {
+  private emitDroplets(count: number, color: string): void {
 
     if (this.reduceMotion) return;
 
-    for (let i = 0; i < count; i++) {
-
-      const angle = Math.random() * Math.PI * 2;
-      const speed = 40 + Math.random() * 120;
-
-      const maxLife = 0.35 + Math.random() * 0.45;
-
-      this.droplets.push({
-        x: this.pointerX,
-        y: this.pointerY,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed - 40,
-        radius: 1.5 + Math.random() * 2.5,
-        life: maxLife,
-        maxLife,
-        color
-      });
-    }
-
-    // Limite le nombre total de particules.
-    if (this.droplets.length > GameScreen.MAX_DROPLETS) {
-      this.droplets.splice(
-        0,
-        this.droplets.length - GameScreen.MAX_DROPLETS
-      );
-    }
-  }
-
-  /**
-   * Met à jour la physique des gouttelettes (gravité, vieillesse).
-   */
-  private updateDroplets(deltaSeconds: number): void {
-
-    for (let i = this.droplets.length - 1; i >= 0; i--) {
-
-      const drop = this.droplets[i];
-
-      drop.life -= deltaSeconds;
-
-      if (drop.life <= 0) {
-        this.droplets.splice(i, 1);
-        continue;
-      }
-
-      drop.vy += 380 * deltaSeconds; // gravité
-      drop.x += drop.vx * deltaSeconds;
-      drop.y += drop.vy * deltaSeconds;
-    }
-  }
-
-  /**
-   * Dessine les gouttelettes avec un fondu lié à leur âge.
-   */
-  private drawDroplets(): void {
-
-    for (const drop of this.droplets) {
-
-      const alpha = Math.max(drop.life / drop.maxLife, 0) * 0.8;
-
-      this.ctx.globalAlpha = alpha;
-      this.ctx.fillStyle = drop.color;
-
-      this.ctx.beginPath();
-      this.ctx.arc(drop.x, drop.y, drop.radius, 0, Math.PI * 2);
-      this.ctx.fill();
-    }
-
-    this.ctx.globalAlpha = 1;
+    spawnDroplets(
+      this.droplets,
+      count,
+      color,
+      this.pointerX,
+      this.pointerY,
+      GameScreen.MAX_DROPLETS,
+    );
   }
 
   ngAfterViewInit(): void {
@@ -823,18 +751,20 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       // frottement audible + gerbe de gouttelettes sous l'outil.
       const canvasScale = this.canvas.width / this.WIDTH;
 
-      this.spawnDroplets(
+      this.emitDroplets(
         Math.min(3, 1 + Math.round(result.removed / 40)),
         'rgba(210, 235, 250, 0.9)'
       );
 
       // Les gouttelettes naissent au bord du cercle de l'outil,
       // pas exactement sous le pointeur : projection radiale.
-      for (const drop of this.droplets.slice(-3)) {
-        const angle = Math.random() * Math.PI * 2;
-        drop.x = this.pointerX + Math.cos(angle) * tool.radius * canvasScale * 0.7;
-        drop.y = this.pointerY + Math.sin(angle) * tool.radius * canvasScale * 0.7;
-      }
+      scatterRecentDroplets(
+        this.droplets,
+        this.pointerX,
+        this.pointerY,
+        tool.radius * canvasScale * 0.7,
+        3,
+      );
 
       this.audio.playScrub(Math.min(1, result.removed / 60));
       this.audio.playSplash();
@@ -878,7 +808,7 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       // pause ou sous le menu de victoire : elles s'évanouissent
       // doucement au lieu de rester figées sous le voile.
       if (this.droplets.length > 0) {
-        this.updateDroplets(frameDelta);
+        updateDroplets(this.droplets, frameDelta);
       }
 
       // Le jeu est en pause tant que le menu de victoire est
@@ -949,29 +879,15 @@ export class GameScreen implements AfterViewInit, OnDestroy {
     // Secousse d'écran : toute la scène
     // est translatée de quelques pixels.
     // ---------------------------------
-    let shakeX = 0;
-    let shakeY = 0;
+    const shakeOffset = computeShakeOffset(this.shake);
 
-    if (this.shake) {
-
-      const remaining = this.shake.until - performance.now();
-
-      if (remaining <= 0) {
-        this.shake = null;
-      } else {
-        // Amplitude décroissante sur la durée restante.
-        const amplitude =
-          this.shake.intensity * (remaining / 450);
-
-        shakeX = (Math.random() * 2 - 1) * amplitude;
-        shakeY = (Math.random() * 2 - 1) * amplitude;
-      }
-    }
+    // La secousse s'auto-purge lorsqu'elle est terminée.
+    this.shake = shakeOffset.shake;
 
     ctx.save();
 
-    if (shakeX !== 0 || shakeY !== 0) {
-      ctx.translate(shakeX, shakeY);
+    if (shakeOffset.x !== 0 || shakeOffset.y !== 0) {
+      ctx.translate(shakeOffset.x, shakeOffset.y);
     }
 
     // Affichage du curseur de nettoyage.
@@ -1017,7 +933,7 @@ export class GameScreen implements AfterViewInit, OnDestroy {
     // sous l'anneau du curseur.
     // ---------------------------------
     if (this.droplets.length > 0) {
-      this.drawDroplets();
+      drawDroplets(ctx, this.droplets);
     }
 
     // ---------------------------------
@@ -1028,90 +944,17 @@ export class GameScreen implements AfterViewInit, OnDestroy {
     // ---------------------------------
     if (this.pointerInside && tool && !this.paused()) {
 
-      // Le rayon de l'outil est exprimé en unités carte :
-      // on le convertit à l'échelle du canvas.
-      const radiusOnCanvas =
-        tool.radius * (this.canvas.width / this.WIDTH);
-
-      // Couleur d'accent propre à l'outil équipé.
-      const accent = GameScreen.toolAccentColor(tool.id);
-
-      // Anneau extérieur : double trait blanc/colouré pour
-      // rester lisible sur les surfaces claires comme sombres.
-      ctx.beginPath();
-      ctx.arc(this.pointerX, this.pointerY, radiusOnCanvas, 0, Math.PI * 2);
-
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
-      ctx.lineWidth = 3;
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.arc(this.pointerX, this.pointerY, radiusOnCanvas, 0, Math.PI * 2);
-
-      ctx.strokeStyle = accent;
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-
-      // Halo intérieur très léger : suggère la zone d'effet.
-      ctx.beginPath();
-      ctx.arc(this.pointerX, this.pointerY, radiusOnCanvas, 0, Math.PI * 2);
-
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.07)';
-      ctx.fill();
-
-      // Anneau pulsé pendant un frottement actif : retour visuel
-      // du nettoyage en cours.
-      if (this.isCleaning) {
-
-        const pulse =
-          0.6 + 0.4 * Math.sin(performance.now() / 90);
-
-        ctx.beginPath();
-        ctx.arc(
-          this.pointerX,
-          this.pointerY,
-          radiusOnCanvas * 0.92,
-          0,
-          Math.PI * 2
-        );
-
-        ctx.strokeStyle = accent;
-        ctx.globalAlpha = 0.35 * pulse;
-        ctx.lineWidth = 5;
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-      }
-
-      // Croix centrale : précision du point d'impact.
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
-      ctx.lineWidth = 1.5;
-
-      ctx.beginPath();
-      ctx.moveTo(this.pointerX - 6, this.pointerY);
-      ctx.lineTo(this.pointerX + 6, this.pointerY);
-      ctx.moveTo(this.pointerX, this.pointerY - 6);
-      ctx.lineTo(this.pointerX, this.pointerY + 6);
-      ctx.stroke();
+      drawCursorRing(
+        ctx,
+        tool,
+        this.pointerX,
+        this.pointerY,
+        this.canvas.width / this.WIDTH,
+        this.isCleaning,
+      );
     }
 
     ctx.restore();
-  }
-
-  /**
-   * Couleur d'accent associée à chaque outil (curseur, anneau).
-   */
-  private static toolAccentColor(toolId: string): string {
-
-    const colors: Record<string, string> = {
-      'sponge': '#f4c95d',
-      'brush': '#7ec4a0',
-      'scraper': '#8ab6d4',
-      'pressure-washer': '#6ea8fe',
-      'steam-cleaner': '#c9a0f5',
-      'overpowered': '#ff8a7a'
-    };
-
-    return colors[toolId] ?? '#ffffff';
   }
 
   // --------------------------------
@@ -1166,7 +1009,7 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       for (let i = 0; i < 24; i++) {
         this.pointerX = Math.random() * this.canvas.width;
         this.pointerY = Math.random() * this.canvas.height;
-        this.spawnDroplets(2, 'rgba(244, 201, 93, 0.9)');
+        this.emitDroplets(2, 'rgba(244, 201, 93, 0.9)');
       }
 
       this.pointerX = savedX;
