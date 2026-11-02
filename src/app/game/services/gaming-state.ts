@@ -175,7 +175,17 @@ export class GamingState {
 /**
  * Identifiants des cartes débloquées.
  */
-readonly unlockedMaps = signal<string[]>(['terrace']);
+/**
+ * Identifiants des cartes débloquées.
+ *
+ * Deux cartes gratuites ouvrent le jeu : la terrasse (monde
+ * Maison) et le tableau du grenier (monde Peinture), afin que
+ * le joueur découvre immédiatement deux ambiances différentes.
+ */
+readonly unlockedMaps = signal<string[]>([
+  'terrace',
+  'attic-painting'
+]);
 
 /**
  * Vérifie si une carte est débloquée.

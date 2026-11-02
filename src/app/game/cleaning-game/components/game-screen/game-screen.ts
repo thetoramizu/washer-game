@@ -31,12 +31,30 @@ export class GameScreen implements AfterViewInit, OnDestroy {
 
   // Largeur native maximale du canvas : au-delà, la carte est
   // rendue à une résolution plafonnée pour rester fluide.
-  private static readonly MAX_CANVAS_WIDTH = 900;
+  private static readonly MAX_CANVAS_WIDTH = 1400;
 
   // Socle de récompense versé même si les gains accumulés pendant
   // la partie restent modestes (cohérent avec des améliorations à
   // partir de 100 $).
   private static readonly MINIMUM_MAP_REWARD = 25;
+
+  // Largeur native minimale du canvas : en dessous, la carte
+  // serait trop petite pour être jouable ; elle débordera donc
+  // horizontalement (défilement dans son conteneur).
+  private static readonly MIN_CANVAS_WIDTH = 640;
+
+  // Facteur d'échelle physique maximal appliqué au canvas :
+  // au-delà, l'image serait visiblement floue ou pixélisée.
+  private static readonly MAX_DISPLAY_SCALE = 1.5;
+
+  // Observeur qui adapte la résolution du canvas à la taille
+  // réelle de son conteneur (redimensionnement de fenêtre,
+  // rotation mobile, etc.).
+  private resizeObserver?: ResizeObserver;
+
+  // Dernière largeur de conteneur prise en compte, pour éviter
+  // de recalculer le canvas pour quelques pixels près.
+  private lastContainerWidth = 0;
 
   @ViewChild('gameCanvas')
   canvasRef!: ElementRef<HTMLCanvasElement>;
@@ -91,13 +109,21 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   private static readonly PROGRESS_UPDATE_INTERVAL_MS = 150;
 
   /**
-   * Le taux affiché est arrondi à l'entier : un joueur qui voit
-   * « 100 % » peut encore avoir d'infimes résidus à retirer
-   * avant d'atteindre le seuil de validation. On l'indique pour
-   * éviter la frustration, sans forcer un nettoyage parfait.
+   * Le seuil de validation étant fixé à 99,5 %, un joueur qui voit
+   * « 99 % » peut encore devoir frotter quelques résidus avant
+   * que la progression réelle n'atteigne ce seuil. On l'indique
+   * pour éviter la frustration, sans forcer un nettoyage parfait.
    */
   get showFinishHint(): boolean {
-    return this.mapReward() === 0 && this.progress() >= 99.5;
+    return this.mapReward() === 0 && this.progress() >= 99;
+  }
+
+  /**
+   * Le monde « nuit » n'est éclairé que par le halo de l'outil :
+   * le rendu applique un masque noir autour du curseur.
+   */
+  private get isNightWorld(): boolean {
+    return this.activeMap().surfaceStyle === 'night';
   }
 
   // Boucle d'animation : rend la scène à chaque image au lieu
@@ -120,6 +146,12 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   // Récompense versée à la fin de la partie.
   readonly mapReward = signal(0);
 
+  // Menu de victoire affiché par-dessus le jeu dès que la
+  // récompense est obtenue (recommencer / changer de carte /
+  // boutique / menu principal). Le joueur peut le refermer pour
+  // continuer à frotter les derniers résidus.
+  readonly victoryMenuOpen = signal(false);
+
   ngAfterViewInit(): void {
 
     // Les écouteurs sont posés directement sur le canvas : en
@@ -141,7 +173,136 @@ export class GameScreen implements AfterViewInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.detachPointerListeners?.();
+    this.resizeObserver?.disconnect();
     this.stopRenderLoop();
+  }
+
+  // --------------------------------
+  // Adaptation aux taille d'écran
+  // --------------------------------
+
+  /**
+   * Ajuste la résolution interne du canvas à la largeur
+   * réellement disponible à l'écran.
+   *
+   * La carte s'adapte ainsi à la taille de l'écran : sur un
+   * grand moniteur elle occupe tout l'espace (dans la limite
+   * d'un plafond de résolution pour garder un rendu fluide),
+   * sur un petit écran elle se réduit proportionnellement.
+   * Le ratio largeur/hauteur de la carte est toujours conservé,
+   * sinon le repérage curseur/zones serait décalé.
+   */
+  private sizeCanvasToDisplay(): void {
+
+    const container = this.canvas.parentElement;
+
+    // Largeur physique disponible (conteneur) ; si elle n'est
+    // pas encore mesurable, on retombe sur la taille de la carte.
+    const availableWidth =
+      container && container.clientWidth > 0
+        ? container.clientWidth - 24 // padding du conteneur
+        : Math.min(this.WIDTH, GameScreen.MAX_CANVAS_WIDTH);
+
+    // Échelle d'affichage : la carte remplit l'espace disponible,
+    // sans jamais être agrandie au-delà d'un facteur raisonnable
+    // (sinon l'image deviendrait floue).
+    let displayScale = availableWidth / this.WIDTH;
+
+    displayScale = Math.min(
+      displayScale,
+      GameScreen.MAX_DISPLAY_SCALE
+    );
+
+    // Résolution native du canvas : ni trop petite (jouabilité),
+    // ni trop grande (performances).
+    let canvasWidth = Math.round(this.WIDTH * displayScale);
+
+    canvasWidth = Math.max(
+      GameScreen.MIN_CANVAS_WIDTH,
+      Math.min(canvasWidth, GameScreen.MAX_CANVAS_WIDTH)
+    );
+
+    const bufferScale = canvasWidth / this.WIDTH;
+
+    this.canvas.width = canvasWidth;
+    this.canvas.height = Math.round(this.HEIGHT * bufferScale);
+
+    // L'espace occupé à l'écran suit exactement la résolution
+    // choisie : le mapping pointeur → carte reste donc exact.
+    this.canvas.style.width = `${canvasWidth}px`;
+    this.canvas.style.height = `${this.canvas.height}px`;
+
+    this.lastContainerWidth = availableWidth;
+  }
+
+  /**
+   * Réagit aux changements de taille du conteneur de jeu.
+   *
+   * Quand l'écran change de dimensions, on recalcule la taille
+   * du canvas puis on régénère la surface propre à la nouvelle
+   * échelle. La progression étant exprimée en pourcentage des
+   * quantités de salissure (et non en pixels), le nettoyage déjà
+   * effectué est conservé lors d'un simple redimensionnement.
+   */
+  private setupResizeObserver(): void {
+
+    const container = this.canvas.parentElement;
+
+    if (!container || typeof ResizeObserver === 'undefined') return;
+
+    // Un seul observeur pour toute la durée de vie du composant.
+    if (this.resizeObserver) {
+      this.resizeObserver.disconnect();
+    }
+
+    this.resizeObserver = new ResizeObserver(() => {
+
+      const width = container.clientWidth;
+
+      // Ignore les variations infinitésimales (ascenseurs…).
+      if (Math.abs(width - this.lastContainerWidth) < 8) return;
+
+      const previousWidth = this.canvas.width;
+
+      this.sizeCanvasToDisplay();
+
+      // Rien à faire si la résolution native n'a pas changé.
+      if (this.canvas.width === previousWidth) return;
+
+      this.rebuildCleanSurface();
+
+      this.drawFrame();
+    });
+
+    this.resizeObserver.observe(container);
+  }
+
+  /**
+   * Régénère l'image de la surface propre à l'échelle courante
+   * du canvas (après un redimensionnement).
+   */
+  private rebuildCleanSurface(): void {
+
+    if (!this.dirtEngine) return;
+
+    const cleanCanvas = document.createElement('canvas');
+
+    cleanCanvas.width = this.dirtEngine.bufferWidth;
+    cleanCanvas.height = this.dirtEngine.bufferHeight;
+
+    const cleanContext = cleanCanvas.getContext('2d')!;
+
+    if (!cleanContext) return;
+
+    this.cleanCtx = cleanContext;
+    this.generateCleanSurface();
+
+    this.cleanImage = cleanContext.getImageData(
+      0,
+      0,
+      this.dirtEngine.bufferWidth,
+      this.dirtEngine.bufferHeight
+    );
   }
 
   /**
@@ -204,18 +365,14 @@ export class GameScreen implements AfterViewInit, OnDestroy {
 
     this.canvas = this.canvasRef.nativeElement;
 
-    // Résolution native du canvas plafonnée à la taille réelle :
-    // les grandes cartes sont affichées plus petites à l'écran,
-    // ce qui évite tout agrandissement flou et toute surcharge.
-    const displayWidth = Math.min(this.WIDTH, GameScreen.MAX_CANVAS_WIDTH);
+    // Définit la résolution du canvas en fonction de la taille
+    // réellement disponible à l'écran.
+    this.sizeCanvasToDisplay();
 
-    const scale = displayWidth / this.WIDTH;
-
-    // Les deux dimensions sont réduites avec le même facteur :
-    // le ratio est conservé, sinon le repérage curseur/zones
-    // serait décalé (étirement vertical ou horizontal).
-    this.canvas.width = Math.round(this.WIDTH * scale);
-    this.canvas.height = Math.round(this.HEIGHT * scale);
+    // La carte suit désormais la taille de l'écran : on surveille
+    // le conteneur pour re-calculer le canvas quand il change
+    // (redimensionnement, rotation…).
+    this.setupResizeObserver();
 
     this.ctx = this.canvas.getContext('2d')!;
 
@@ -286,12 +443,79 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   // Génération de la surface propre
   // --------------------------------
 
+  /**
+   * Dessine la surface propre selon le style de la carte.
+   *
+   * Chaque monde possède son ambiance : dalles de pierre pour
+   * la maison, toile encadrée pour la peinture, asphalte pour
+   * l'extérieur, chaussée presque noire pour la nuit.
+   */
   private generateCleanSurface(): void {
     const ctx = this.cleanCtx;
 
     // La surface est dessinée à l'échelle du tampon du moteur.
     const width = this.dirtEngine.bufferWidth;
     const height = this.dirtEngine.bufferHeight;
+
+    switch (this.activeMap().surfaceStyle) {
+
+      case 'canvas':
+        this.drawPaintingSurface(ctx, width, height);
+        break;
+
+      case 'road':
+        this.drawRoadSurface(ctx, width, height);
+        break;
+
+      case 'night':
+        this.drawNightSurface(ctx, width, height);
+        break;
+
+      case 'garden':
+        this.drawGardenSurface(ctx, width, height);
+        break;
+
+      case 'concrete':
+        this.drawConcreteSurface(ctx, width, height);
+        break;
+
+      default:
+        this.drawTileSurface(ctx, width, height);
+    }
+  }
+
+  /**
+   * Terrain commun : petites variations de teinte en plus des
+   * motifs propres à chaque surface.
+   */
+  private addSpeckle(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    color: string,
+    count = 450
+  ): void {
+
+    ctx.fillStyle = color;
+
+    for (let i = 0; i < count; i++) {
+      ctx.fillRect(
+        Math.random() * width,
+        Math.random() * height,
+        1,
+        1
+      );
+    }
+  }
+
+  /**
+   * Monde Maison — terrasse : dalles de pierre.
+   */
+  private drawTileSurface(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
 
     ctx.fillStyle = '#aaa99c';
     ctx.fillRect(0, 0, width, height);
@@ -314,14 +538,328 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       }
     }
 
-    // Légères variations de texture
-    for (let i = 0; i < 450; i++) {
-      ctx.fillStyle = 'rgba(70, 70, 60, 0.08)';
+    this.addSpeckle(ctx, width, height, 'rgba(70, 70, 60, 0.08)');
+  }
+
+  /**
+   * Monde Maison — jardin : terre et touffes d'herbe.
+   */
+  private drawGardenSurface(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+
+    ctx.fillStyle = '#7d8459';
+    ctx.fillRect(0, 0, width, height);
+
+    // Touffes d'herbe de deux teintes.
+    for (let i = 0; i < 900; i++) {
+
+      ctx.fillStyle =
+        Math.random() > 0.5 ? '#87905f' : '#737b52';
 
       ctx.fillRect(
         Math.random() * width,
         Math.random() * height,
-        1,
+        3,
+        2
+      );
+    }
+
+    // Cailloux çà et là.
+    for (let i = 0; i < 60; i++) {
+
+      ctx.fillStyle = 'rgba(150, 145, 130, 0.55)';
+
+      ctx.beginPath();
+      ctx.arc(
+        Math.random() * width,
+        Math.random() * height,
+        1.5 + Math.random() * 2,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+    }
+  }
+
+  /**
+   * Monde Maison — sous-sol : béton brut avec joints.
+   */
+  private drawConcreteSurface(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+
+    ctx.fillStyle = '#83867f';
+    ctx.fillRect(0, 0, width, height);
+
+    // Grandes plaques de béton séparées par des joints sombres.
+    const slabSize = 60;
+
+    ctx.strokeStyle = 'rgba(55, 58, 55, 0.5)';
+    ctx.lineWidth = 1;
+
+    for (let x = 0; x < width; x += slabSize) {
+
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, height);
+      ctx.stroke();
+    }
+
+    for (let y = 0; y < height; y += slabSize) {
+
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(width, y);
+      ctx.stroke();
+    }
+
+    // Taches de béton plus clair / plus foncé.
+    for (let i = 0; i < 120; i++) {
+
+      ctx.fillStyle = Math.random() > 0.5
+        ? 'rgba(140, 143, 136, 0.25)'
+        : 'rgba(65, 68, 64, 0.20)';
+
+      ctx.beginPath();
+      ctx.arc(
+        Math.random() * width,
+        Math.random() * height,
+        2 + Math.random() * 6,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+    }
+  }
+
+  /**
+   * Monde Peinture — tableau : cadre boisé et toile peinte.
+   */
+  private drawPaintingSurface(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+
+    // Cadre en bois autour de la toile.
+    const frame = Math.max(10, Math.round(width * 0.03));
+
+    ctx.fillStyle = '#6b4a2f';
+    ctx.fillRect(0, 0, width, height);
+
+    // Relief du cadre (bord interne plus clair).
+    ctx.fillStyle = '#8a6242';
+    ctx.fillRect(
+      frame * 0.35,
+      frame * 0.35,
+      width - frame * 0.7,
+      height - frame * 0.7
+    );
+
+    // Toile : fond ciel.
+    const canvasX = frame;
+    const canvasY = frame;
+    const canvasW = width - frame * 2;
+    const canvasH = height - frame * 2;
+
+    const sky = ctx.createLinearGradient(
+      0,
+      canvasY,
+      0,
+      canvasY + canvasH
+    );
+
+    sky.addColorStop(0, '#a8c8dd');
+    sky.addColorStop(0.65, '#d8dcc2');
+    sky.addColorStop(1, '#e7dfa8');
+
+    ctx.fillStyle = sky;
+    ctx.fillRect(canvasX, canvasY, canvasW, canvasH);
+
+    // Soleil.
+    ctx.fillStyle = '#f2d98c';
+    ctx.beginPath();
+    ctx.arc(
+      canvasX + canvasW * 0.72,
+      canvasY + canvasH * 0.28,
+      Math.max(6, canvasW * 0.045),
+      0,
+      Math.PI * 2
+    );
+    ctx.fill();
+
+    // Collines en arrière-plan.
+    ctx.fillStyle = '#8fae7c';
+    ctx.beginPath();
+    ctx.moveTo(canvasX, canvasY + canvasH * 0.72);
+    ctx.quadraticCurveTo(
+      canvasX + canvasW * 0.3,
+      canvasY + canvasH * 0.5,
+      canvasX + canvasW * 0.6,
+      canvasY + canvasH * 0.7
+    );
+    ctx.quadraticCurveTo(
+      canvasX + canvasW * 0.8,
+      canvasY + canvasH * 0.8,
+      canvasX + canvasW,
+      canvasY + canvasH * 0.62
+    );
+    ctx.lineTo(canvasX + canvasW, canvasY + canvasH);
+    ctx.lineTo(canvasX, canvasY + canvasH);
+    ctx.closePath();
+    ctx.fill();
+
+    // Pré au premier plan.
+    ctx.fillStyle = '#6f9154';
+    ctx.beginPath();
+    ctx.moveTo(canvasX, canvasY + canvasH * 0.85);
+    ctx.quadraticCurveTo(
+      canvasX + canvasW * 0.5,
+      canvasY + canvasH * 0.75,
+      canvasX + canvasW,
+      canvasY + canvasH * 0.88
+    );
+    ctx.lineTo(canvasX + canvasW, canvasY + canvasH);
+    ctx.lineTo(canvasX, canvasY + canvasH);
+    ctx.closePath();
+    ctx.fill();
+
+    // Empâtes de pinceau : la touche « peinture à l'huile ».
+    for (let i = 0; i < 140; i++) {
+
+      const palette = ['#9dbb85', '#7fa06a', '#c9d3a8', '#e3dcae'];
+
+      ctx.fillStyle =
+        palette[Math.floor(Math.random() * palette.length)];
+
+      ctx.save();
+
+      const px = canvasX + Math.random() * canvasW;
+      const py =
+        canvasY + canvasH * 0.6 + Math.random() * canvasH * 0.4;
+
+      ctx.translate(px, py);
+      ctx.rotate((Math.random() - 0.5) * 0.6);
+      ctx.fillRect(-4, -1.5, 8, 3);
+
+      ctx.restore();
+    }
+
+    // Vernis jauni : léger voile chaud sur toute la toile.
+    ctx.fillStyle = 'rgba(120, 90, 40, 0.08)';
+    ctx.fillRect(canvasX, canvasY, canvasW, canvasH);
+  }
+
+  /**
+   * Monde Extérieur — route / chemin : asphalte et marquages.
+   */
+  private drawRoadSurface(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+
+    // Bandes d'herbe de part et d'autre de la chaussée.
+    ctx.fillStyle = '#6f8a55';
+    ctx.fillRect(0, 0, width, height);
+
+    const roadTop = Math.round(height * 0.16);
+    const roadBottom = Math.round(height * 0.84);
+
+    // Chaussée goudronnée.
+    ctx.fillStyle = '#5c5e60';
+    ctx.fillRect(0, roadTop, width, roadBottom - roadTop);
+
+    // Usure : bandes plus claires là où passent les roues.
+    ctx.fillStyle = 'rgba(110, 112, 114, 0.35)';
+    ctx.fillRect(0, roadTop + (roadBottom - roadTop) * 0.18, width, 8);
+    ctx.fillRect(0, roadTop + (roadBottom - roadTop) * 0.66, width, 8);
+
+    // Liseré blanc en bord de chaussée.
+    ctx.fillStyle = 'rgba(230, 230, 220, 0.85)';
+    ctx.fillRect(0, roadTop + 3, width, 3);
+    ctx.fillRect(0, roadBottom - 6, width, 3);
+
+    // Marque centrale jaune discontinu.
+    const middle = Math.round((roadTop + roadBottom) / 2);
+    const dashWidth = Math.max(14, Math.round(width * 0.03));
+
+    ctx.fillStyle = '#d9b23c';
+
+    for (let x = 0; x < width; x += dashWidth * 2) {
+      ctx.fillRect(x, middle - 2, dashWidth, 4);
+    }
+
+    // Grain de l'asphalte.
+    this.addSpeckle(
+      ctx,
+      width,
+      height,
+      'rgba(30, 30, 30, 0.18)',
+      900
+    );
+
+    // Herbes folles débordant sur la chaussée.
+    ctx.fillStyle = 'rgba(90, 120, 70, 0.6)';
+
+    for (let i = 0; i < 90; i++) {
+
+      const edge = Math.random() > 0.5
+        ? roadTop + Math.random() * 4
+        : roadBottom - Math.random() * 4;
+
+      ctx.fillRect(Math.random() * width, edge, 2, 4);
+    }
+  }
+
+  /**
+   * Monde Nuit — chaussée plongée dans le noir.
+   *
+   * La surface elle-même est très sombre : seul le halo de
+   * l'outil (voir DirtEngine.renderWithFlashlight) révèle ce
+   * qui entoure le curseur.
+   */
+  private drawNightSurface(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number
+  ): void {
+
+    // Fond quasi noir.
+    ctx.fillStyle = '#101218';
+    ctx.fillRect(0, 0, width, height);
+
+    // Bande de chaussée à peine plus claire.
+    const roadTop = Math.round(height * 0.2);
+    const roadBottom = Math.round(height * 0.8);
+
+    ctx.fillStyle = '#1b1e26';
+    ctx.fillRect(0, roadTop, width, roadBottom - roadTop);
+
+    // Marquage central fantomatique.
+    const middle = Math.round((roadTop + roadBottom) / 2);
+    const dashWidth = Math.max(14, Math.round(width * 0.03));
+
+    ctx.fillStyle = 'rgba(190, 180, 120, 0.35)';
+
+    for (let x = 0; x < width; x += dashWidth * 2) {
+      ctx.fillRect(x, middle - 1, dashWidth, 3);
+    }
+
+    // Reflets très discrets de l'asphalte humide.
+    for (let i = 0; i < 70; i++) {
+
+      ctx.fillStyle = 'rgba(70, 80, 100, 0.10)';
+
+      ctx.fillRect(
+        Math.random() * width,
+        roadTop + Math.random() * (roadBottom - roadTop),
+        6,
         1
       );
     }
@@ -460,6 +998,13 @@ export class GameScreen implements AfterViewInit, OnDestroy {
 
       if (!this.running) return;
 
+      // Le jeu est en pause tant que le menu de victoire est
+      // ouvert : rien ne se passe sous le voile.
+      if (this.victoryMenuOpen()) {
+        this.rafId = requestAnimationFrame(loop);
+        return;
+      }
+
       // Nettoyage continu tant que le pointeur est pressé :
       // au plus une opération par image.
       if (this.isCleaning) {
@@ -509,19 +1054,43 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       return;
     }
 
+    // Affichage du curseur de nettoyage.
+    const tool = this.activeTool;
+
     // Le moteur génère l'image finale de la carte, à la taille
     // exacte du canvas (et non celle de la carte logique) : sans
     // cela, l'aperçu affiché serait décalé par rapport aux zones
     // réellement nettoyées sous le curseur.
-    this.dirtEngine.render(
-      this.ctx,
-      this.cleanImage,
-      this.canvas.width,
-      this.canvas.height
-    );
+    //
+    // Dans le monde « nuit », le rendu est ensuite masqué par un
+    // halo lumineux centré sur le curseur : tout le reste de la
+    // carte replonge dans le noir.
+    if (this.isNightWorld) {
 
-    // Affichage du curseur de nettoyage.
-    const tool = this.activeTool;
+      this.dirtEngine.renderWithFlashlight(
+        this.ctx,
+        this.cleanImage,
+        this.canvas.width,
+        this.canvas.height,
+        this.pointerInside && tool
+          ? this.pointerX
+          : this.canvas.width / 2,
+        this.pointerInside && tool
+          ? this.pointerY
+          : this.canvas.height / 2,
+        tool?.radius ?? 40,
+        this.WIDTH
+      );
+
+    } else {
+
+      this.dirtEngine.render(
+        this.ctx,
+        this.cleanImage,
+        this.canvas.width,
+        this.canvas.height
+      );
+    }
 
     if (this.pointerInside && tool) {
 
@@ -585,11 +1154,12 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       this.progress.set(progress);
     }
 
-    // La carte est validée dès le seuil de propreté atteint. Ce
-    // seuil (COMPLETION_THRESHOLD côté moteur) correspond exactement
-    // au « 100 % » perçu par le joueur grâce à l'arrondi à
-    // l'entier : la récompense tombe donc au moment précis où le
-    // taux affiché passe à 100 %, sans exiger un nettoyage parfait.
+    // La carte est validée dès le seuil de propreté atteint
+    // (COMPLETION_THRESHOLD côté moteur, fixé à 99,5 %). Comme
+    // l'affichage est arrondi à l'entier, le joueur voit alors
+    // « 99 % » juste avant la validation, puis « 100 % » une
+    // fois la récompense obtenue : les infimes résidus restants
+    // ne sont pas exigés pour valider la carte.
     if (this.dirtEngine.isComplete() && this.mapReward() === 0) {
 
       // Récompense plafonnée par la taille réelle de la carte :
@@ -607,6 +1177,9 @@ export class GameScreen implements AfterViewInit, OnDestroy {
 
       this.mapReward.set(reward);
       this.gamingState.addMoney(reward);
+
+      // Le menu de victoire s'affiche par-dessus le jeu.
+      this.victoryMenuOpen.set(true);
     }
   }
 
@@ -627,6 +1200,7 @@ export class GameScreen implements AfterViewInit, OnDestroy {
     this.progress.set(0);
     this.earnedMoney = 0;
     this.mapReward.set(0);
+    this.victoryMenuOpen.set(false);
 
     this.lastCleanTime = 0;
     this.lastProgressUpdate = performance.now();
@@ -673,9 +1247,11 @@ export class GameScreen implements AfterViewInit, OnDestroy {
 
     this.activeMap.set(selectedMap);
 
-    // Arrête toute opération de nettoyage en cours.
+    // Arrête toute opération de nettoyage en cours et ferme
+    // un éventuel menu de victoire de l'ancienne carte.
     this.isCleaning = false;
     this.lastCleanTime = 0;
+    this.victoryMenuOpen.set(false);
 
     // Réinitialise le pointeur.
     this.pointerX = -100;
@@ -687,6 +1263,21 @@ export class GameScreen implements AfterViewInit, OnDestroy {
     // initializeGame() remet aussi la progression à 0 % et
     // redémarre la boucle d'animation sur la nouvelle échelle.
     this.initializeGame();
+  }
+
+  /**
+   * Referme le menu de victoire pour continuer à nettoyer les
+   * infimes résidus restants (la récompense est déjà acquise).
+   */
+  closeVictoryMenu(): void {
+    this.victoryMenuOpen.set(false);
+  }
+
+  /**
+   * Recommence la carte depuis le menu de victoire.
+   */
+  restartFromVictory(): void {
+    this.resetGame();
   }
 
   goShop(): void {

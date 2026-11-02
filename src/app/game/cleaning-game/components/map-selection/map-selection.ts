@@ -1,6 +1,8 @@
 import { Component, inject } from '@angular/core';
 import { GameMap } from '../../../models/game-map';
 import { GAME_MAPS } from '../../../models/game-maps.data';
+import { GameWorld } from '../../../models/game-world';
+import { GAME_WORLDS } from '../../../models/game-worlds.data';
 import { GamingState } from '../../../services/gaming-state';
 
 @Component({
@@ -16,6 +18,23 @@ export class MapSelection {
 
   // Catalogue des cartes.
   readonly maps = GAME_MAPS;
+
+  // Catalogue des mondes.
+  readonly worlds = GAME_WORLDS;
+
+  /**
+   * Cartes appartenant à un monde donné.
+   */
+  mapsOfWorld(worldId: string): GameMap[] {
+    return this.maps.filter(map => map.worldId === worldId);
+  }
+
+  /**
+   * Retourne le monde d'une carte (décorations du gabarit).
+   */
+  worldOf(map: GameMap): GameWorld | undefined {
+    return this.worlds.find(world => world.id === map.worldId);
+  }
 
   /**
    * Retourne le nom lisible de la difficulté.

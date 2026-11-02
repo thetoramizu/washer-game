@@ -13,14 +13,13 @@ export interface CleaningResult {
  * Progression à partir de laquelle la carte est considérée
  * comme terminée.
  *
- * L'affichage étant arrondi à l'entier le plus proche, un
- * joueur qui voit « 100 % » a donc déjà franchi ce seuil :
- * la récompense est versée en cohérence avec ce qu'il voit.
- * La marge restante correspond aux infimes résidus de
- * salissure (pixels isolés très difficiles à atteindre),
- * qui ne sont pas exigés pour valider la carte.
+ * Le seuil est fixé à 99,5 % : le joueur doit nettoyer presque
+ * intégralement la surface pour valider la carte et toucher sa
+ * récompense. Les 0,5 % restants correspondent aux infimes résidus
+ * de salissure (pixels isolés très difficiles à atteindre), qui
+ * ne sont pas exigés pour valider la carte.
  */
-export const COMPLETION_THRESHOLD = 95;
+export const COMPLETION_THRESHOLD = 99.5;
 
 /**
  * Moteur indépendant d'Angular.
@@ -651,11 +650,71 @@ getRewardPerUnit(): number {
    * Indique si la carte doit être considérée comme terminée.
    *
    * On valide dès que la progression atteint le seuil de
-   * propreté : cela correspond à ce que le joueur voit déjà
-   * affiché comme « 100 % » (arrondi à l'entier). Les infimes
+   * propreté (COMPLETION_THRESHOLD, soit 99,5 %). Les infimes
    * résidus restants ne bloquent donc plus la récompense.
    */
   isComplete(): boolean {
     return this.getProgress() >= COMPLETION_THRESHOLD;
+  }
+
+  // --------------------------------
+  // Rendu « monde nuit » (lanterne)
+  // --------------------------------
+
+  /**
+   * Dessine la scène puis assombrit tout ce qui se trouve hors
+   * du halo lumineux autour du curseur : seul le rayon de
+   * l'outil reste visible, le reste de la carte plonge dans le
+   * noir.
+   *
+   * Le masque est réalisé avec un dégradé radial appliqué par
+   * dessus le rendu final : le centre suit exactement le
+   * pointeur et la transition vers le noir est douce.
+   */
+  renderWithFlashlight(
+    ctx: CanvasRenderingContext2D,
+    baseImage: ImageData,
+    destinationWidth: number,
+    destinationHeight: number,
+    pointerX: number,
+    pointerY: number,
+    toolRadius: number,
+    mapWidth: number
+  ): void {
+
+    // Scène complète d'abord (surface propre + salissures).
+    this.render(ctx, baseImage, destinationWidth, destinationHeight);
+
+    // Rayon de l'outil reprojété à l'échelle du canvas.
+    const radiusOnCanvas = Math.max(
+      20,
+      toolRadius * (destinationWidth / mapWidth)
+    );
+
+    // Halo légèrement plus large que l'outil pour que le bord
+    // du pinceau reste partiellement visible.
+    const lightRadius = radiusOnCanvas * 1.6;
+
+    // Dégradé radial : transparent au centre, quasi opaque en
+    // périphérie.
+    const gradient = ctx.createRadialGradient(
+      pointerX,
+      pointerY,
+      lightRadius * 0.35,
+      pointerX,
+      pointerY,
+      lightRadius
+    );
+
+    gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    gradient.addColorStop(0.7, 'rgba(0, 0, 0, 0.55)');
+    gradient.addColorStop(1, 'rgba(0, 0, 0, 0.97)');
+
+    ctx.save();
+
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, destinationWidth, destinationHeight);
+
+    ctx.restore();
   }
 }
