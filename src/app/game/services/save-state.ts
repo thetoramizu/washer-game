@@ -23,6 +23,18 @@ export type GameScreen =
  * sont enregistrées : jamais l'écran courant ni la carte en cours
  * (données de session).
  */
+/**
+ * Record de temps et étoiles obtenues sur une carte.
+ */
+export interface MapRecord {
+
+  // Meilleur temps de nettoyage, en millisecondes.
+  bestTimeMs: number;
+
+  // Étoiles associées à ce record : 1 à 3.
+  stars: number;
+}
+
 export interface SaveData {
 
   // Version du format : permet de migrer ou d'ignorer une
@@ -43,6 +55,13 @@ export interface SaveData {
   // pour afficher une coche ✓ dans la sélection de cartes.
   completedMaps: string[];
 
+  // Meilleurs temps et étoiles par carte (méta-progression) :
+  // { [mapId]: { bestTimeMs, stars } }.
+  mapRecords: Record<string, MapRecord>;
+
+  // Préférence « son coupé », persistée avec la progression.
+  audioMuted: boolean;
+
   savedAt: string;
 }
 
@@ -62,6 +81,8 @@ const DEFAULT_SAVE: Omit<SaveData, 'version' | 'savedAt'> = {
     brush: { power: 0, efficiency: 0, penetration: 0 },
   },
   completedMaps: [],
+  mapRecords: {},
+  audioMuted: false,
 };
 
 /**
@@ -78,13 +99,21 @@ export class SaveState {
 
   private readonly storage = inject(SAVE_STORAGE);
 
-  static readonly SAVE_VERSION = 1;
+  static readonly SAVE_VERSION = 2;
 
   /**
    * Sauvegarde chargée au démarrage, ou null si aucune
    * sauvegarde valide n'a pu être lue.
    */
   readonly hasSave = signal(false);
+
+  /**
+   * Préférence « son coupé », réplique locale du champ persisté
+   * `audioMuted` : l'AudioService la lit et la modifie, SaveState
+   * la réécrit automatiquement dans la sauvegarde (via le push
+   * périodique de GamingState).
+   */
+  readonly audioMuted = signal(DEFAULT_SAVE.audioMuted);
 
   // --------------------------------
   // Chargement & validation

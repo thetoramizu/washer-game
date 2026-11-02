@@ -711,9 +711,115 @@ getRewardPerUnit(): number {
     return this.getProgress() >= COMPLETION_THRESHOLD;
   }
 
+  /**
+   * Retourne la quantité de salissure encore présente dans un
+   * rectangle de la carte (coordonnées logiques), exprimée en
+   * pourcentage de la quantité initiale totale.
+   *
+   * Utilisé par l'onde de propreté : seules les zones où il reste
+   * plus de 20 % de salissure sont mises en évidence — jamais un
+   * pixel propre ne clignote, ce n'est pas un aimbot mais un coup
+   * d'œil pédagogique sur les angles morts.
+   */
+  getDirtPercentageInArea(
+    mapX: number,
+    mapY: number,
+    mapWidth: number,
+    mapHeight: number
+  ): number {
+
+    if (this.initialAmount <= 0) return 0;
+
+    const scale = DirtEngine.RENDER_SCALE;
+
+    const minX = Math.max(0, Math.floor(mapX * scale));
+    const maxX = Math.min(
+      this.bufferWidth - 1,
+      Math.ceil((mapX + mapWidth) * scale)
+    );
+
+    const minY = Math.max(0, Math.floor(mapY * scale));
+    const maxY = Math.min(
+      this.bufferHeight - 1,
+      Math.ceil((mapY + mapHeight) * scale)
+    );
+
+    let sum = 0;
+
+    for (const layer of this.layers) {
+
+      for (let y = minY; y <= maxY; y++) {
+
+        const rowOffset = y * this.bufferWidth;
+
+        for (let x = minX; x <= maxX; x++) {
+          sum += layer[rowOffset + x];
+        }
+      }
+    }
+
+    return (sum / this.initialAmount) * 100;
+  }
+
   // --------------------------------
   // Rendu « monde nuit » (lanterne)
   // --------------------------------
+
+  /**
+   * Couche « révélation » persistante pour le monde nuit :
+   * halos semi-transparents où le passage de la lumière a
+   * brièvement laissé une trace (mémoire visuelle).
+   *
+   * Chaque entrée expire après quelques centaines de millisecondes,
+   * ce qui produit une traînée lumineuse qui suit le curseur et
+   * s'estompe derrière lui.
+   */
+  private revealTrail: {
+    x: number;
+    y: number;
+    size: number;
+    until: number;
+  }[] = [];
+
+  /**
+   * Lampadaires fixes d'une carte : sources de lumière secondaires
+   * qui percent toujours le noir (positions relatives 0-1).
+   */
+  readonly streetLamps: { x: number; y: number; radius: number }[] = [];
+
+  /**
+   * Place des lampadaires sur la carte courante (uniquement pour
+   * les cartes « nuit »). Deux points chauds suffisent à donner
+   * des repères sans dévoiler les salissures.
+   */
+  setupStreetLamps(): void {
+
+    this.streetLamps.length = 0;
+
+    this.streetLamps.push(
+      { x: 0.18, y: 0.14, radius: 0.16 },
+      { x: 0.82, y: 0.86, radius: 0.16 },
+    );
+  }
+
+  /**
+   * Enregistre une trace de révélation autour du curseur (appelé
+   * à chaque image par `renderWithFlashlight`).
+   */
+  private pushReveal(
+    x: number,
+    y: number,
+    size: number,
+    now: number
+  ): void {
+
+    this.revealTrail.push({ x, y, size, until: now + 550 });
+
+    // Garde-fou : la traînée ne doit pas grossir indéfiniment.
+    if (this.revealTrail.length > 90) {
+      this.revealTrail.splice(0, this.revealTrail.length - 90);
+    }
+  }
 
   /**
    * Dessine la scène puis assombrit tout ce qui se trouve hors
@@ -721,9 +827,13 @@ getRewardPerUnit(): number {
    * l'outil reste visible, le reste de la carte plonge dans le
    * noir.
    *
-   * Le masque est réalisé avec un dégradé radial appliqué par
-   * dessus le rendu final : le centre suit exactement le
-   * pointeur et la transition vers le noir est douce.
+   * Trois touches rendent la lanterne « vivante » :
+   * - halo tremblant (le composant fournit un centre déjà
+   *   oscillé via sin(t)) ;
+   * - traînée de révélation : la lumière laisse une mémoire
+   *   visuelle brève derrière le curseur ;
+   * - lampadaires fixes : deux zones restent faiblement
+   *   éclairées en permanence, comme des repères dans le noir.
    */
   renderWithFlashlight(
     ctx: CanvasRenderingContext2D,
@@ -733,11 +843,14 @@ getRewardPerUnit(): number {
     pointerX: number,
     pointerY: number,
     toolRadius: number,
-    mapWidth: number
+    mapWidth: number,
+    pointerInside: boolean
   ): void {
 
     // Scène complète d'abord (surface propre + salissures).
     this.render(ctx, baseImage, destinationWidth, destinationHeight);
+
+    const now = performance.now();
 
     // Rayon de l'outil reprojété à l'échelle du canvas.
     const radiusOnCanvas = Math.max(
@@ -749,25 +862,92 @@ getRewardPerUnit(): number {
     // du pinceau reste partiellement visible.
     const lightRadius = radiusOnCanvas * 1.6;
 
-    // Dégradé radial : transparent au centre, quasi opaque en
-    // périphérie.
-    const gradient = ctx.createRadialGradient(
+    // La traînée n'enregistre la position que lorsque le curseur
+    // est réellement posé sur la carte.
+    if (pointerInside) {
+      this.pushReveal(pointerX, pointerY, lightRadius * 0.9, now);
+    }
+
+    // Masque noir complet d'abord…
+    ctx.save();
+    ctx.fillStyle = 'rgba(4, 5, 10, 0.965)';
+    ctx.fillRect(0, 0, destinationWidth, destinationHeight);
+
+    // …puis tout ce qui éclaire est « évidé » en mode lighter :
+    // le noir disparaît localement sous chaque source.
+    ctx.globalCompositeOperation = 'lighter';
+
+    // 1) Traînée de révélation : souvenirs lumineux qui s'éteignent.
+    let write = 0;
+
+    for (const mark of this.revealTrail) {
+
+      if (mark.until < now) continue;
+
+      const age = 1 - (mark.until - now) / 550;
+      const alpha = 0.30 * (1 - age);
+
+      const fade = ctx.createRadialGradient(
+        mark.x, mark.y, 0,
+        mark.x, mark.y, mark.size
+      );
+
+      fade.addColorStop(0, `rgba(120, 130, 160, ${alpha})`);
+      fade.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+      ctx.fillStyle = fade;
+      ctx.beginPath();
+      ctx.arc(mark.x, mark.y, mark.size, 0, Math.PI * 2);
+      ctx.fill();
+
+      this.revealTrail[write++] = mark;
+    }
+
+    this.revealTrail.length = write;
+
+    // 2) Lampadaires fixes : halos froids permanents.
+    for (const lamp of this.streetLamps) {
+
+      const lx = lamp.x * destinationWidth;
+      const ly = lamp.y * destinationHeight;
+      const lr = lamp.radius * destinationWidth;
+
+      const glow = ctx.createRadialGradient(lx, ly, 0, lx, ly, lr);
+
+      glow.addColorStop(0, 'rgba(180, 190, 220, 0.55)');
+      glow.addColorStop(0.5, 'rgba(120, 130, 170, 0.22)');
+      glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+      ctx.fillStyle = glow;
+      ctx.beginPath();
+      ctx.arc(lx, ly, lr, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Point chaud du lampadaire.
+      ctx.fillStyle = 'rgba(255, 240, 200, 0.85)';
+      ctx.beginPath();
+      ctx.arc(lx, ly, Math.max(2, lr * 0.04), 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 3) Lanterne du curseur : trou de lumière principal.
+    const lantern = ctx.createRadialGradient(
       pointerX,
       pointerY,
-      lightRadius * 0.35,
+      lightRadius * 0.25,
       pointerX,
       pointerY,
       lightRadius
     );
 
-    gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
-    gradient.addColorStop(0.7, 'rgba(0, 0, 0, 0.55)');
-    gradient.addColorStop(1, 'rgba(0, 0, 0, 0.97)');
+    lantern.addColorStop(0, 'rgba(255, 250, 235, 0.95)');
+    lantern.addColorStop(0.55, 'rgba(200, 195, 175, 0.45)');
+    lantern.addColorStop(1, 'rgba(0, 0, 0, 0)');
 
-    ctx.save();
-
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, destinationWidth, destinationHeight);
+    ctx.fillStyle = lantern;
+    ctx.beginPath();
+    ctx.arc(pointerX, pointerY, lightRadius, 0, Math.PI * 2);
+    ctx.fill();
 
     ctx.restore();
   }
