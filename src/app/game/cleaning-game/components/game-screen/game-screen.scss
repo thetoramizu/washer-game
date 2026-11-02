@@ -101,7 +101,7 @@
 -------------------------------- */
 
 .game-area {
-  max-width: 1100px;
+  max-width: min(1400px, 100%);
   width: 100%;
   margin: 20px auto 0;
 
@@ -110,16 +110,20 @@
   border-radius: 10px;
   padding: 12px;
   box-sizing: border-box;
+
+  /* Sur très petit écran, la carte garde une largeur minimale
+     jouable et défile horizontalement si nécessaire. */
+  overflow-x: auto;
 }
 
 .game-canvas {
   display: block;
 
-  /* Le canvas s'affiche à sa résolution native : les grandes
-     cartes paraissent plus petites plutôt que floues ou
-     surdimensionnées, et le rendu reste fluide. */
+  /* La résolution native du canvas est calculée par le
+     composant en fonction de la place réellement disponible :
+     la carte remplit l'écran (sans jamais être agrandie de
+     façon visible) et reste nette à toute taille. */
   max-width: 100%;
-  height: auto;
 
   border-radius: 5px;
 
