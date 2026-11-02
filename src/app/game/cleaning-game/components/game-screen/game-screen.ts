@@ -24,7 +24,7 @@ import {
   scatterRecentDroplets,
   ScreenShake,
   spawnDroplets,
-  triggerShake,
+  createShake,
   updateDroplets,
 } from './droplets';
 
@@ -303,7 +303,7 @@ export class GameScreen implements AfterViewInit, OnDestroy {
 
     if (this.reduceMotion) return;
 
-    triggerShake(this, intensity, duration);
+    this.shake = createShake(intensity, duration);
   }
 
   /**

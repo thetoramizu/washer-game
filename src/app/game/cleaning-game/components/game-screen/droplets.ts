@@ -42,16 +42,12 @@ export const SHAKE_BASE_DURATION_MS = 450;
 /**
  * Déclenche une secousse d'écran brève.
  *
- * @param shakeObjet Reference to the shake state holder.
  * @param intensity Amplitude maximale en pixels canvas.
  * @param duration Durée en millisecondes.
+ * @returns L'état de secousse à stocker côté appelant.
  */
-export function triggerShake(
-  state: { shake: ScreenShake | null },
-  intensity: number,
-  duration: number,
-): void {
-  state.shake = {
+export function createShake(intensity: number, duration: number): ScreenShake {
+  return {
     intensity,
     until: performance.now() + duration,
   };
