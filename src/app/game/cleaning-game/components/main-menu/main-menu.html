@@ -32,6 +32,16 @@
       <strong>{{ gameState.money() }} $</strong>
     </div>
 
+    <!-- Réglage du son : préférence sauvegardée (localStorage). -->
+    <label class="sound-toggle">
+      <input
+        type="checkbox"
+        [checked]="gameState.soundEnabled()"
+        (change)="toggleSound()"
+      />
+      Sons du jeu
+    </label>
+
   </section>
 
 </main>

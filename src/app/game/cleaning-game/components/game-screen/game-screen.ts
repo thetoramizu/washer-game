@@ -12,8 +12,34 @@ import { DirtEngine } from '../../engine/dirt-engine/dirt-engine';
 import { GameMap } from '../../../models/game-map';
 import { GAME_MAPS } from '../../../models/game-maps.data';
 import { GamingState } from '../../../services/gaming-state';
+import { AudioService } from '../../../services/audio-service';
 import { CleaningTool } from '../../../models/cleaning-tool';
 import { DecimalPipe } from '@angular/common';
+
+/**
+ * Gouttelette émise sous le curseur pendant le nettoyage :
+ * particule physique simple (position, vélocité, durée de vie),
+ * dessinée dans la boucle de rendu — jamais via le DOM.
+ */
+interface Droplet {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
+  life: number;
+  maxLife: number;
+  color: string;
+}
+
+/**
+ * Secousse d'écran : translation aléatoire brève appliquée à
+ * tout le canvas (à la victoire, ou en retour tactile léger).
+ */
+interface ScreenShake {
+  intensity: number;
+  until: number;
+}
 
 /**
  * Écran de jeu : canvas, nettoyage et barre d'outils.
@@ -60,6 +86,9 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   canvasRef!: ElementRef<HTMLCanvasElement>;
 
   readonly gamingState = inject(GamingState);
+
+  // Sons synthétisés (frottement, splash, carillon de victoire).
+  private readonly audio = inject(AudioService);
 
   dirtTypes = DIRT_TYPES;
 
@@ -152,12 +181,235 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   // continuer à frotter les derniers résidus.
   readonly victoryMenuOpen = signal(false);
 
+  // --------------------------------
+  // Pause & raccourcis clavier
+  // --------------------------------
+
+  /**
+   * Le jeu est en pause soit explicitement (Échap / P / bouton),
+   * soit implicitement quand le menu de victoire est ouvert.
+   */
+  readonly paused = signal(false);
+
+  get isPaused(): boolean {
+    return this.paused() || this.victoryMenuOpen();
+  }
+
+  togglePause(): void {
+
+    // Inutile de mettre en pause une carte déjà terminée :
+    // le menu de victoire joue déjà ce rôle.
+    if (this.victoryMenuOpen()) return;
+
+    this.paused.update(value => !value);
+
+    // Relâche le nettoyage si une secousse était pressée.
+    if (this.paused()) {
+      this.isCleaning = false;
+      this.lastCleanTime = 0;
+    }
+  }
+
+  closePause(): void {
+    this.paused.set(false);
+  }
+
+  /**
+   * Raccourcis clavier globaux de l'écran de jeu.
+   *
+   * Écoutés hors Angular (listener natif posé dans
+   * ngAfterViewInit) : ils ne déclenchent aucun change detection
+   * inutile. Voir setupKeyboardShortcuts().
+   */
+  private handleKey(event: KeyboardEvent): void {
+
+    // Ne capture pas les touches saisies dans un champ.
+    const target = event.target as HTMLElement | null;
+
+    if (target &&
+        (target.tagName === 'INPUT' ||
+         target.tagName === 'TEXTAREA' ||
+         target.isContentEditable)) {
+      return;
+    }
+
+    switch (event.key) {
+
+      case 'Escape':
+      case 'p':
+      case 'P':
+        // Échap ferme d'abord le menu de victoire ou la pause.
+        if (this.victoryMenuOpen()) {
+          this.closeVictoryMenu();
+        } else {
+          this.togglePause();
+        }
+        break;
+
+      case 'r':
+      case 'R':
+        if (!this.victoryMenuOpen()) this.resetGame();
+        break;
+
+      case 'm':
+      case 'M':
+        this.gamingState.toggleSound();
+        break;
+
+      default: {
+        // 1…6 : sélection rapide du nième outil possédé.
+        const index = Number(event.key) - 1;
+
+        if (Number.isInteger(index) && index >= 0) {
+          const tool = this.ownedTools[index];
+
+          if (tool) this.selectTool(tool.id);
+        }
+      }
+    }
+  }
+
+  /**
+   * Attache les écouteurs clavier sur le document (et libère
+   * tout à la destruction du composant).
+   */
+  private setupKeyboardShortcuts(): void {
+
+    const onKeyDown = (event: KeyboardEvent) => this.handleKey(event);
+
+    document.addEventListener('keydown', onKeyDown);
+
+    this.detachKeyboardListener = () =>
+      document.removeEventListener('keydown', onKeyDown);
+  }
+
+  private detachKeyboardListener?: () => void;
+
+  // --------------------------------
+  // Particules & secousses d'écran
+  // --------------------------------
+
+  // Gouttelettes actives, mises à jour et dessinées par la
+  // boucle de rendu (jamais par les événements du pointeur).
+  private droplets: Droplet[] = [];
+
+  // Nombre maximal de particules simultanées : au-delà, les
+  // plus anciennes sont remplacées (coût de dessin borné).
+  private static readonly MAX_DROPLETS = 90;
+
+  // Secousse en cours (null = écran stable).
+  private shake: ScreenShake | null = null;
+
+  // Respecte le réglage d'accessibilité du système : en
+  // « réduction de mouvement », pas de tremblement d'écran.
+  private readonly reduceMotion =
+    typeof window !== 'undefined' &&
+    !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+  /**
+   * Déclenche une secousse d'écran brève.
+   *
+   * @param intensity Amplitude maximale en pixels canvas.
+   * @param durationDurée en millisecondes.
+   */
+  private triggerShake(intensity: number, duration: number): void {
+
+    if (this.reduceMotion) return;
+
+    this.shake = {
+      intensity,
+      until: performance.now() + duration
+    };
+  }
+
+  /**
+   * Émet quelques gouttelettes autour du curseur, projetées
+   * vers l'extérieur avec une légère gravité.
+   */
+  private spawnDroplets(count: number, color: string): void {
+
+    if (this.reduceMotion) return;
+
+    for (let i = 0; i < count; i++) {
+
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 40 + Math.random() * 120;
+
+      const maxLife = 0.35 + Math.random() * 0.45;
+
+      this.droplets.push({
+        x: this.pointerX,
+        y: this.pointerY,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed - 40,
+        radius: 1.5 + Math.random() * 2.5,
+        life: maxLife,
+        maxLife,
+        color
+      });
+    }
+
+    // Limite le nombre total de particules.
+    if (this.droplets.length > GameScreen.MAX_DROPLETS) {
+      this.droplets.splice(
+        0,
+        this.droplets.length - GameScreen.MAX_DROPLETS
+      );
+    }
+  }
+
+  /**
+   * Met à jour la physique des gouttelettes (gravité, vieillesse).
+   */
+  private updateDroplets(deltaSeconds: number): void {
+
+    for (let i = this.droplets.length - 1; i >= 0; i--) {
+
+      const drop = this.droplets[i];
+
+      drop.life -= deltaSeconds;
+
+      if (drop.life <= 0) {
+        this.droplets.splice(i, 1);
+        continue;
+      }
+
+      drop.vy += 380 * deltaSeconds; // gravité
+      drop.x += drop.vx * deltaSeconds;
+      drop.y += drop.vy * deltaSeconds;
+    }
+  }
+
+  /**
+   * Dessine les gouttelettes avec un fondu lié à leur âge.
+   */
+  private drawDroplets(): void {
+
+    for (const drop of this.droplets) {
+
+      const alpha = Math.max(drop.life / drop.maxLife, 0) * 0.8;
+
+      this.ctx.globalAlpha = alpha;
+      this.ctx.fillStyle = drop.color;
+
+      this.ctx.beginPath();
+      this.ctx.arc(drop.x, drop.y, drop.radius, 0, Math.PI * 2);
+      this.ctx.fill();
+    }
+
+    this.ctx.globalAlpha = 1;
+  }
+
   ngAfterViewInit(): void {
 
     // Les écouteurs sont posés directement sur le canvas : en
     // zoneless, ni les mouvements du pointeur ni le rendu ne
     // déclenchent de change detection.
     this.setupCanvasInteraction();
+
+    // Raccourcis clavier (Échap/P, R, M, 1…6), eux aussi hors
+    // Angular : une touche pressée ne relance pas la vue.
+    this.setupKeyboardShortcuts();
 
     // Le canvas n'existe que lorsque cet écran est affiché :
     // la partie peut donc démarrer ici, en tenant compte de
@@ -173,6 +425,7 @@ export class GameScreen implements AfterViewInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.detachPointerListeners?.();
+    this.detachKeyboardListener?.();
     this.resizeObserver?.disconnect();
     this.stopRenderLoop();
   }
@@ -870,6 +1123,13 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   // --------------------------------
 
   onPointerDown(event: PointerEvent): void {
+
+    // Le premier clic débloque l'AudioContext (exigence des
+    // navigateurs) et réveille les onglets en arrière-plan.
+    this.audio.unlock();
+
+    if (this.isPaused) return;
+
     this.isCleaning = true;
     this.lastCleanTime = 0;
     this.canvas.setPointerCapture(event.pointerId);
@@ -885,7 +1145,7 @@ export class GameScreen implements AfterViewInit, OnDestroy {
     // Seul l'état interne est mis à jour ici : aucun dessin ni
     // signal dans les écouteurs. La boucle d'animation (RAF)
     // nettoie et rend à chaque image, au plus une fois par frame.
-    if (this.isCleaning) {
+    if (this.isCleaning && !this.isPaused) {
       this.applyDirtyDelta();
     }
   }
@@ -963,8 +1223,29 @@ export class GameScreen implements AfterViewInit, OnDestroy {
     // Accumule les gains selon les salissures retirées.
     // L'économie est centralisée dans le moteur.
     if (result.removed > 0) {
+
       this.earnedMoney +=
         result.removed * this.dirtEngine.getRewardPerUnit();
+
+      // Retour sensoriel proportionnel à l'efficacité du passage :
+      // frottement audible + gerbe de gouttelettes sous l'outil.
+      const canvasScale = this.canvas.width / this.WIDTH;
+
+      this.spawnDroplets(
+        Math.min(3, 1 + Math.round(result.removed / 40)),
+        'rgba(210, 235, 250, 0.9)'
+      );
+
+      // Les gouttelettes naissent au bord du cercle de l'outil,
+      // pas exactement sous le pointeur : projection radiale.
+      for (const drop of this.droplets.slice(-3)) {
+        const angle = Math.random() * Math.PI * 2;
+        drop.x = this.pointerX + Math.cos(angle) * tool.radius * canvasScale * 0.7;
+        drop.y = this.pointerY + Math.sin(angle) * tool.radius * canvasScale * 0.7;
+      }
+
+      this.audio.playScrub(Math.min(1, result.removed / 60));
+      this.audio.playSplash();
     }
   }
 
@@ -994,13 +1275,38 @@ export class GameScreen implements AfterViewInit, OnDestroy {
 
     this.running = true;
 
+    let lastFrameTime = performance.now();
+
     const loop = () => {
 
       if (!this.running) return;
 
+      // Temps écoulé depuis l'image précédente, pour la physique
+      // des particules (indépendante de la fréquence d'affichage).
+      const now = performance.now();
+
+      const frameDelta = Math.min((now - lastFrameTime) / 1000, 0.05);
+
+      lastFrameTime = now;
+
+      // Les gouttelettes continuent de tomber même pendant une
+      // pause ou sous le menu de victoire : elles s'évanouissent
+      // doucement au lieu de rester figées sous le voile.
+      if (this.droplets.length > 0) {
+        this.updateDroplets(frameDelta);
+      }
+
       // Le jeu est en pause tant que le menu de victoire est
       // ouvert : rien ne se passe sous le voile.
       if (this.victoryMenuOpen()) {
+        this.rafId = requestAnimationFrame(loop);
+        return;
+      }
+
+      // En pause explicite : on continue de rendre (les
+      // particules résiduelles), mais plus aucun nettoyage.
+      if (this.paused()) {
+        this.drawFrame();
         this.rafId = requestAnimationFrame(loop);
         return;
       }
@@ -1016,8 +1322,6 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       // Progression throttlée : son calcul parcourt toute la
       // carte, ce qui serait trop coûteux à chaque image sur
       // les grandes surfaces.
-      const now = performance.now();
-
       if (now - this.lastProgressUpdate >=
           GameScreen.PROGRESS_UPDATE_INTERVAL_MS) {
 
@@ -1052,6 +1356,37 @@ export class GameScreen implements AfterViewInit, OnDestroy {
 
     if (!this.ctx || !this.dirtEngine || !this.cleanImage) {
       return;
+    }
+
+    const ctx = this.ctx;
+
+    // ---------------------------------
+    // Secousse d'écran : toute la scène
+    // est translatée de quelques pixels.
+    // ---------------------------------
+    let shakeX = 0;
+    let shakeY = 0;
+
+    if (this.shake) {
+
+      const remaining = this.shake.until - performance.now();
+
+      if (remaining <= 0) {
+        this.shake = null;
+      } else {
+        // Amplitude décroissante sur la durée restante.
+        const amplitude =
+          this.shake.intensity * (remaining / 450);
+
+        shakeX = (Math.random() * 2 - 1) * amplitude;
+        shakeY = (Math.random() * 2 - 1) * amplitude;
+      }
+    }
+
+    ctx.save();
+
+    if (shakeX !== 0 || shakeY !== 0) {
+      ctx.translate(shakeX, shakeY);
     }
 
     // Affichage du curseur de nettoyage.
@@ -1092,41 +1427,106 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       );
     }
 
-    if (this.pointerInside && tool) {
+    // ---------------------------------
+    // Gouttelettes : par-dessus la carte,
+    // sous l'anneau du curseur.
+    // ---------------------------------
+    if (this.droplets.length > 0) {
+      this.drawDroplets();
+    }
+
+    // ---------------------------------
+    // Curseur personnalisé : le pointeur
+    // système est masqué (cursor: none),
+    // l'anneau montre le rayon réel de
+    // l'outil, coloré selon sa vitesse.
+    // ---------------------------------
+    if (this.pointerInside && tool && !this.paused()) {
 
       // Le rayon de l'outil est exprimé en unités carte :
       // on le convertit à l'échelle du canvas.
       const radiusOnCanvas =
         tool.radius * (this.canvas.width / this.WIDTH);
 
-      this.ctx.beginPath();
+      // Couleur d'accent propre à l'outil équipé.
+      const accent = GameScreen.toolAccentColor(tool.id);
 
-      this.ctx.arc(
-        this.pointerX,
-        this.pointerY,
-        radiusOnCanvas,
-        0,
-        Math.PI * 2
-      );
+      // Anneau extérieur : double trait blanc/colouré pour
+      // rester lisible sur les surfaces claires comme sombres.
+      ctx.beginPath();
+      ctx.arc(this.pointerX, this.pointerY, radiusOnCanvas, 0, Math.PI * 2);
 
-      this.ctx.strokeStyle = '#ffffff';
-      this.ctx.lineWidth = 2;
-      this.ctx.stroke();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+      ctx.lineWidth = 3;
+      ctx.stroke();
 
-      // Petit point central.
-      this.ctx.beginPath();
+      ctx.beginPath();
+      ctx.arc(this.pointerX, this.pointerY, radiusOnCanvas, 0, Math.PI * 2);
 
-      this.ctx.arc(
-        this.pointerX,
-        this.pointerY,
-        3,
-        0,
-        Math.PI * 2
-      );
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
 
-      this.ctx.fillStyle = '#ffffff';
-      this.ctx.fill();
+      // Halo intérieur très léger : suggère la zone d'effet.
+      ctx.beginPath();
+      ctx.arc(this.pointerX, this.pointerY, radiusOnCanvas, 0, Math.PI * 2);
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.07)';
+      ctx.fill();
+
+      // Anneau pulsé pendant un frottement actif : retour visuel
+      // du nettoyage en cours.
+      if (this.isCleaning) {
+
+        const pulse =
+          0.6 + 0.4 * Math.sin(performance.now() / 90);
+
+        ctx.beginPath();
+        ctx.arc(
+          this.pointerX,
+          this.pointerY,
+          radiusOnCanvas * 0.92,
+          0,
+          Math.PI * 2
+        );
+
+        ctx.strokeStyle = accent;
+        ctx.globalAlpha = 0.35 * pulse;
+        ctx.lineWidth = 5;
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+
+      // Croix centrale : précision du point d'impact.
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+      ctx.lineWidth = 1.5;
+
+      ctx.beginPath();
+      ctx.moveTo(this.pointerX - 6, this.pointerY);
+      ctx.lineTo(this.pointerX + 6, this.pointerY);
+      ctx.moveTo(this.pointerX, this.pointerY - 6);
+      ctx.lineTo(this.pointerX, this.pointerY + 6);
+      ctx.stroke();
     }
+
+    ctx.restore();
+  }
+
+  /**
+   * Couleur d'accent associée à chaque outil (curseur, anneau).
+   */
+  private static toolAccentColor(toolId: string): string {
+
+    const colors: Record<string, string> = {
+      'sponge': '#f4c95d',
+      'brush': '#7ec4a0',
+      'scraper': '#8ab6d4',
+      'pressure-washer': '#6ea8fe',
+      'steam-cleaner': '#c9a0f5',
+      'overpowered': '#ff8a7a'
+    };
+
+    return colors[toolId] ?? '#ffffff';
   }
 
   // --------------------------------
@@ -1178,7 +1578,26 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       this.mapReward.set(reward);
       this.gamingState.addMoney(reward);
 
-      // Le menu de victoire s'affiche par-dessus le jeu.
+      // Célébration : carillon synthétisé + secousse d'écran.
+      this.audio.unlock();
+      this.audio.playVictoryDing();
+      this.triggerShake(9, 450);
+
+      // Gerbe de gouttelettes sur toute la largeur du canvas.
+      const savedX = this.pointerX;
+      const savedY = this.pointerY;
+
+      for (let i = 0; i < 24; i++) {
+        this.pointerX = Math.random() * this.canvas.width;
+        this.pointerY = Math.random() * this.canvas.height;
+        this.spawnDroplets(2, 'rgba(244, 201, 93, 0.9)');
+      }
+
+      this.pointerX = savedX;
+      this.pointerY = savedY;
+
+      // Le jeu est en pause tant que le menu de victoire est
+      // ouvert : rien ne se passe sous le voile.
       this.victoryMenuOpen.set(true);
     }
   }
@@ -1201,6 +1620,11 @@ export class GameScreen implements AfterViewInit, OnDestroy {
     this.earnedMoney = 0;
     this.mapReward.set(0);
     this.victoryMenuOpen.set(false);
+    this.paused.set(false);
+
+    // Nettoie les effets visuels résiduels de l'ancienne partie.
+    this.droplets.length = 0;
+    this.shake = null;
 
     this.lastCleanTime = 0;
     this.lastProgressUpdate = performance.now();
@@ -1225,6 +1649,10 @@ export class GameScreen implements AfterViewInit, OnDestroy {
     // Réinitialise le chronomètre pour éviter
     // un deltaTime trop important lors du changement.
     this.lastCleanTime = 0;
+
+    // Petit retour sonore + visuel du nouveau rayon.
+    this.audio.unlock();
+    this.audio.playClick();
 
     // Actualise le curseur avec le nouveau rayon.
     this.drawFrame();
@@ -1252,6 +1680,11 @@ export class GameScreen implements AfterViewInit, OnDestroy {
     this.isCleaning = false;
     this.lastCleanTime = 0;
     this.victoryMenuOpen.set(false);
+    this.paused.set(false);
+
+    // Effets visuels résiduels de l'ancienne carte.
+    this.droplets.length = 0;
+    this.shake = null;
 
     // Réinitialise le pointeur.
     this.pointerX = -100;
@@ -1278,6 +1711,22 @@ export class GameScreen implements AfterViewInit, OnDestroy {
    */
   restartFromVictory(): void {
     this.resetGame();
+  }
+
+  /**
+   * Bascule le son depuis l'en-tête du jeu : débloque
+   * l'AudioContext (geste utilisateur) puis inverse le réglage
+   * sauvegardé, et rejoue un « tick » pour confirmer l'activation.
+   */
+  toggleSound(): void {
+
+    this.audio.unlock();
+
+    this.gamingState.toggleSound();
+
+    if (this.gamingState.soundEnabled()) {
+      this.audio.playClick();
+    }
   }
 
   goShop(): void {

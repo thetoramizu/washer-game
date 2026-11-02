@@ -4,8 +4,16 @@ import { Service, signal } from '@angular/core';
 import { GameMap } from '../models/game-map';
 import { CleaningTool, ToolUpgradeType } from '../models/cleaning-tool';
 import { CLEANING_TOOLS } from '../models/cleaning-tools.data';
+import { GAME_MAPS } from '../models/game-maps.data';
 import { ToolUpgradeInventory } from '../models/tool-upgrade';
 import { TOOL_UPGRADES } from '../models/tool-upgrades-data';
+import {
+  autoSave,
+  clearSave,
+  loadSave,
+  persistedList,
+  persistedSignal
+} from './save-storage';
 
 /**
  * Écrans disponibles dans le jeu.
@@ -16,10 +24,77 @@ export type GameScreen =
   | 'tool-shop'
   | 'game';
 
+/**
+ * Clés de sauvegarde (localStorage).
+ */
+const SAVE_KEYS = {
+  money: 'money',
+  ownedTools: 'owned-tools',
+  equippedTool: 'equipped-tool',
+  upgrades: 'upgrades',
+  unlockedMaps: 'unlocked-maps',
+  sound: 'sound',
+} as const;
+
+/**
+ * Progression par défaut d'un nouveau profil.
+ */
+const DEFAULT_MONEY = 250;
+const DEFAULT_TOOLS = ['sponge', 'brush'];
+const DEFAULT_EQUIPPED_TOOL = 'sponge';
+const DEFAULT_MAPS = ['terrace', 'attic-painting'];
+
 @Service()
 export class GamingState {
 
-    
+  constructor() {
+
+    // ---------------------------------
+    // Sauvegarde automatique
+    // ---------------------------------
+    // Chaque signal persistant est écrit dans le localStorage
+    // (avec anti-rebond) dès qu'il change — y compris lorsque la
+    // modification survient hors zone Angular (gains versés par
+    // la boucle de rendu du canvas à la victoire).
+    autoSave(this.money, SAVE_KEYS.money);
+    autoSave(this.ownedTools, SAVE_KEYS.ownedTools);
+    autoSave(this.equippedToolId, SAVE_KEYS.equippedTool);
+    autoSave(this.upgradeInventory, SAVE_KEYS.upgrades);
+    autoSave(this.unlockedMaps, SAVE_KEYS.unlockedMaps);
+    autoSave(this.soundEnabled, SAVE_KEYS.sound);
+  }
+
+  /**
+   * Efface toute la progression sauvegardée et recharge
+   * le profil par défaut.
+   */
+  resetProgress(): void {
+
+    clearSave();
+
+    this.money.set(DEFAULT_MONEY);
+    this.ownedTools.set([...DEFAULT_TOOLS]);
+    this.equippedToolId.set(DEFAULT_EQUIPPED_TOOL);
+    this.upgradeInventory.set({});
+    this.unlockedMaps.set([...DEFAULT_MAPS]);
+    this.soundEnabled.set(true);
+    this.currentScreen.set('main-menu');
+  }
+
+  // --------------------------------
+  // Préférences
+  // --------------------------------
+
+  /**
+   * Activation des sons synthétisés (Web Audio API).
+   * Sauvegardée entre les sessions.
+   */
+  readonly soundEnabled = persistedSignal<boolean>(SAVE_KEYS.sound, true);
+
+  toggleSound(): void {
+    this.soundEnabled.update(enabled => !enabled);
+  }
+
   // --------------------------------
   // Catalogue des outils
   // --------------------------------
@@ -60,21 +135,13 @@ export class GamingState {
 
   /**
    * Stocke les niveaux achetés pour chaque outil.
+   *
+   * Valeur par défaut vide : tout outil sans achat explicite
+   * est au niveau 0 (géré par getUpgradeLevel). La sauvegarde
+   * éventuelle remplace cette valeur au démarrage.
    */
-  readonly upgradeInventory = signal<ToolUpgradeInventory>({
-    sponge: {
-      radius: 0,
-      power: 0,
-      efficiency: 0,
-      penetration: 0
-    },
-
-    brush: {
-      power: 0,
-      efficiency: 0,
-      penetration: 0
-    }
-  });
+  readonly upgradeInventory =
+    persistedSignal<ToolUpgradeInventory>(SAVE_KEYS.upgrades, {});
 
   /**
    * Retourne le niveau actuel d'une amélioration.
@@ -173,21 +240,6 @@ export class GamingState {
 
     
 /**
- * Identifiants des cartes débloquées.
- */
-/**
- * Identifiants des cartes débloquées.
- *
- * Deux cartes gratuites ouvrent le jeu : la terrasse (monde
- * Maison) et le tableau du grenier (monde Peinture), afin que
- * le joueur découvre immédiatement deux ambiances différentes.
- */
-readonly unlockedMaps = signal<string[]>([
-  'terrace',
-  'attic-painting'
-]);
-
-/**
  * Vérifie si une carte est débloquée.
  */
 isMapUnlocked(mapId: string): boolean {
@@ -228,10 +280,55 @@ unlockMap(map: GameMap): boolean {
   }
 
   // --------------------------------
-  // Argent du joueur
+  // Progression sauvegardée
   // --------------------------------
 
-  readonly money = signal(250);
+  /**
+   * Argent du joueur.
+   */
+  readonly money = persistedSignal<number>(SAVE_KEYS.money, DEFAULT_MONEY);
+
+  /**
+   * Outils possédés : seuls les identifiants connus du catalogue
+   * sont conservés lors du chargement d'une sauvegarde.
+   */
+  readonly ownedTools = persistedList<string>(
+    SAVE_KEYS.ownedTools,
+    DEFAULT_TOOLS,
+    (entry): entry is string =>
+      typeof entry === 'string' && CLEANING_TOOLS.some(tool => tool.id === entry)
+  );
+
+  /**
+   * Carte équipée : validée contre le catalogue au chargement.
+   */
+  readonly equippedToolId = signal<string>(this.readSavedToolId());
+
+  /**
+   * Cartes débloquées : seuls les identifiants connus du catalogue
+   * sont conservés lors du chargement d'une sauvegarde.
+   */
+  readonly unlockedMaps = persistedList<string>(
+    SAVE_KEYS.unlockedMaps,
+    DEFAULT_MAPS,
+    (entry): entry is string =>
+      typeof entry === 'string' && GAME_MAPS.some(map => map.id === entry)
+  );
+
+  /**
+   * Lit l'outil équipé sauvegardé, en retombant sur l'outil par
+   * défaut s'il est inconnu ou non possédé (cohérence de profil).
+   */
+  private readSavedToolId(): string {
+
+    const saved = loadSave<string>(SAVE_KEYS.equippedTool);
+
+    if (typeof saved === 'string' && this.ownedTools().includes(saved)) {
+      return saved;
+    }
+
+    return DEFAULT_EQUIPPED_TOOL;
+  }
 
   addMoney(amount: number): void {
     this.money.update(value => value + Math.max(0, amount));
@@ -261,13 +358,8 @@ unlockMap(map: GameMap): boolean {
   // --------------------------------
   // Outils
   // --------------------------------
-
-  readonly ownedTools = signal<string[]>([
-    'sponge',
-    'brush'
-  ]);
-
-  readonly equippedToolId = signal('sponge');
+  // (ownedTools / equippedToolId déclarés plus haut, section
+  //  « Argent & progression sauvegardée »)
 
   ownsTool(toolId: string): boolean {
     return this.ownedTools().includes(toolId);
