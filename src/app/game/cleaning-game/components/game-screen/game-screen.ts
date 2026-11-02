@@ -31,12 +31,30 @@ export class GameScreen implements AfterViewInit, OnDestroy {
 
   // Largeur native maximale du canvas : au-delà, la carte est
   // rendue à une résolution plafonnée pour rester fluide.
-  private static readonly MAX_CANVAS_WIDTH = 900;
+  private static readonly MAX_CANVAS_WIDTH = 1400;
 
   // Socle de récompense versé même si les gains accumulés pendant
   // la partie restent modestes (cohérent avec des améliorations à
   // partir de 100 $).
   private static readonly MINIMUM_MAP_REWARD = 25;
+
+  // Largeur native minimale du canvas : en dessous, la carte
+  // serait trop petite pour être jouable ; elle débordera donc
+  // horizontalement (défilement dans son conteneur).
+  private static readonly MIN_CANVAS_WIDTH = 640;
+
+  // Facteur d'échelle physique maximal appliqué au canvas :
+  // au-delà, l'image serait visiblement floue ou pixélisée.
+  private static readonly MAX_DISPLAY_SCALE = 1.5;
+
+  // Observeur qui adapte la résolution du canvas à la taille
+  // réelle de son conteneur (redimensionnement de fenêtre,
+  // rotation mobile, etc.).
+  private resizeObserver?: ResizeObserver;
+
+  // Dernière largeur de conteneur prise en compte, pour éviter
+  // de recalculer le canvas pour quelques pixels près.
+  private lastContainerWidth = 0;
 
   @ViewChild('gameCanvas')
   canvasRef!: ElementRef<HTMLCanvasElement>;
@@ -91,13 +109,13 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   private static readonly PROGRESS_UPDATE_INTERVAL_MS = 150;
 
   /**
-   * Le taux affiché est arrondi à l'entier : un joueur qui voit
-   * « 100 % » peut encore avoir d'infimes résidus à retirer
-   * avant d'atteindre le seuil de validation. On l'indique pour
-   * éviter la frustration, sans forcer un nettoyage parfait.
+   * Le seuil de validation étant fixé à 99 %, un joueur qui voit
+   * « 99 % » peut encore devoir frotter quelques résidus avant
+   * que la progression réelle n'atteigne ce seuil. On l'indique
+   * pour éviter la frustration, sans forcer un nettoyage parfait.
    */
   get showFinishHint(): boolean {
-    return this.mapReward() === 0 && this.progress() >= 99.5;
+    return this.mapReward() === 0 && this.progress() >= 98.5;
   }
 
   // Boucle d'animation : rend la scène à chaque image au lieu
@@ -141,7 +159,136 @@ export class GameScreen implements AfterViewInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.detachPointerListeners?.();
+    this.resizeObserver?.disconnect();
     this.stopRenderLoop();
+  }
+
+  // --------------------------------
+  // Adaptation aux taille d'écran
+  // --------------------------------
+
+  /**
+   * Ajuste la résolution interne du canvas à la largeur
+   * réellement disponible à l'écran.
+   *
+   * La carte s'adapte ainsi à la taille de l'écran : sur un
+   * grand moniteur elle occupe tout l'espace (dans la limite
+   * d'un plafond de résolution pour garder un rendu fluide),
+   * sur un petit écran elle se réduit proportionnellement.
+   * Le ratio largeur/hauteur de la carte est toujours conservé,
+   * sinon le repérage curseur/zones serait décalé.
+   */
+  private sizeCanvasToDisplay(): void {
+
+    const container = this.canvas.parentElement;
+
+    // Largeur physique disponible (conteneur) ; si elle n'est
+    // pas encore mesurable, on retombe sur la taille de la carte.
+    const availableWidth =
+      container && container.clientWidth > 0
+        ? container.clientWidth - 24 // padding du conteneur
+        : Math.min(this.WIDTH, GameScreen.MAX_CANVAS_WIDTH);
+
+    // Échelle d'affichage : la carte remplit l'espace disponible,
+    // sans jamais être agrandie au-delà d'un facteur raisonnable
+    // (sinon l'image deviendrait floue).
+    let displayScale = availableWidth / this.WIDTH;
+
+    displayScale = Math.min(
+      displayScale,
+      GameScreen.MAX_DISPLAY_SCALE
+    );
+
+    // Résolution native du canvas : ni trop petite (jouabilité),
+    // ni trop grande (performances).
+    let canvasWidth = Math.round(this.WIDTH * displayScale);
+
+    canvasWidth = Math.max(
+      GameScreen.MIN_CANVAS_WIDTH,
+      Math.min(canvasWidth, GameScreen.MAX_CANVAS_WIDTH)
+    );
+
+    const bufferScale = canvasWidth / this.WIDTH;
+
+    this.canvas.width = canvasWidth;
+    this.canvas.height = Math.round(this.HEIGHT * bufferScale);
+
+    // L'espace occupé à l'écran suit exactement la résolution
+    // choisie : le mapping pointeur → carte reste donc exact.
+    this.canvas.style.width = `${canvasWidth}px`;
+    this.canvas.style.height = `${this.canvas.height}px`;
+
+    this.lastContainerWidth = availableWidth;
+  }
+
+  /**
+   * Réagit aux changements de taille du conteneur de jeu.
+   *
+   * Quand l'écran change de dimensions, on recalcule la taille
+   * du canvas puis on régénère la surface propre à la nouvelle
+   * échelle. La progression étant exprimée en pourcentage des
+   * quantités de salissure (et non en pixels), le nettoyage déjà
+   * effectué est conservé lors d'un simple redimensionnement.
+   */
+  private setupResizeObserver(): void {
+
+    const container = this.canvas.parentElement;
+
+    if (!container || typeof ResizeObserver === 'undefined') return;
+
+    // Un seul observeur pour toute la durée de vie du composant.
+    if (this.resizeObserver) {
+      this.resizeObserver.disconnect();
+    }
+
+    this.resizeObserver = new ResizeObserver(() => {
+
+      const width = container.clientWidth;
+
+      // Ignore les variations infinitésimales (ascenseurs…).
+      if (Math.abs(width - this.lastContainerWidth) < 8) return;
+
+      const previousWidth = this.canvas.width;
+
+      this.sizeCanvasToDisplay();
+
+      // Rien à faire si la résolution native n'a pas changé.
+      if (this.canvas.width === previousWidth) return;
+
+      this.rebuildCleanSurface();
+
+      this.drawFrame();
+    });
+
+    this.resizeObserver.observe(container);
+  }
+
+  /**
+   * Régénère l'image de la surface propre à l'échelle courante
+   * du canvas (après un redimensionnement).
+   */
+  private rebuildCleanSurface(): void {
+
+    if (!this.dirtEngine) return;
+
+    const cleanCanvas = document.createElement('canvas');
+
+    cleanCanvas.width = this.dirtEngine.bufferWidth;
+    cleanCanvas.height = this.dirtEngine.bufferHeight;
+
+    const cleanContext = cleanCanvas.getContext('2d')!;
+
+    if (!cleanContext) return;
+
+    this.cleanCtx = cleanContext;
+    this.generateCleanSurface();
+
+    this.cleanImage = cleanContext.getImageData(
+      0,
+      0,
+      this.dirtEngine.bufferWidth,
+      this.dirtEngine.bufferHeight
+    );
   }
 
   /**
@@ -204,18 +351,14 @@ export class GameScreen implements AfterViewInit, OnDestroy {
 
     this.canvas = this.canvasRef.nativeElement;
 
-    // Résolution native du canvas plafonnée à la taille réelle :
-    // les grandes cartes sont affichées plus petites à l'écran,
-    // ce qui évite tout agrandissement flou et toute surcharge.
-    const displayWidth = Math.min(this.WIDTH, GameScreen.MAX_CANVAS_WIDTH);
+    // Définit la résolution du canvas en fonction de la taille
+    // réellement disponible à l'écran.
+    this.sizeCanvasToDisplay();
 
-    const scale = displayWidth / this.WIDTH;
-
-    // Les deux dimensions sont réduites avec le même facteur :
-    // le ratio est conservé, sinon le repérage curseur/zones
-    // serait décalé (étirement vertical ou horizontal).
-    this.canvas.width = Math.round(this.WIDTH * scale);
-    this.canvas.height = Math.round(this.HEIGHT * scale);
+    // La carte suit désormais la taille de l'écran : on surveille
+    // le conteneur pour re-calculer le canvas quand il change
+    // (redimensionnement, rotation…).
+    this.setupResizeObserver();
 
     this.ctx = this.canvas.getContext('2d')!;
 
@@ -585,11 +728,12 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       this.progress.set(progress);
     }
 
-    // La carte est validée dès le seuil de propreté atteint. Ce
-    // seuil (COMPLETION_THRESHOLD côté moteur) correspond exactement
-    // au « 100 % » perçu par le joueur grâce à l'arrondi à
-    // l'entier : la récompense tombe donc au moment précis où le
-    // taux affiché passe à 100 %, sans exiger un nettoyage parfait.
+    // La carte est validée dès le seuil de propreté atteint
+    // (COMPLETION_THRESHOLD côté moteur, fixé à 99 %). Comme
+    // l'affichage est arrondi à l'entier, le joueur voit alors
+    // « 99 % », voire « 100 % » s'il a nettoyé davantage : les
+    // infimes résidus restants ne sont pas exigés pour valider
+    // la carte.
     if (this.dirtEngine.isComplete() && this.mapReward() === 0) {
 
       // Récompense plafonnée par la taille réelle de la carte :

@@ -13,14 +13,13 @@ export interface CleaningResult {
  * Progression à partir de laquelle la carte est considérée
  * comme terminée.
  *
- * L'affichage étant arrondi à l'entier le plus proche, un
- * joueur qui voit « 100 % » a donc déjà franchi ce seuil :
- * la récompense est versée en cohérence avec ce qu'il voit.
- * La marge restante correspond aux infimes résidus de
- * salissure (pixels isolés très difficiles à atteindre),
- * qui ne sont pas exigés pour valider la carte.
+ * Le seuil est fixé à 99 % : le joueur doit nettoyer presque
+ * intégralement la surface pour valider la carte et toucher sa
+ * récompense. Les 1 % restants correspondent aux infimes résidus
+ * de salissure (pixels isolés très difficiles à atteindre), qui
+ * ne sont pas exigés pour valider la carte.
  */
-export const COMPLETION_THRESHOLD = 95;
+export const COMPLETION_THRESHOLD = 99;
 
 /**
  * Moteur indépendant d'Angular.
