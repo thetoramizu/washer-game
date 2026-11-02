@@ -34,6 +34,29 @@ interface Particle {
 }
 
 /**
+ * Rectangle en coordonnées logiques de la carte, mis en
+ * évidence par l'onde de propreté (zone encore sale > 20 %).
+ */
+interface HighlightRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Onde de propreté : impulsion visuelle temporaire qui
+ * surligne les zones oubliées. Déclenchée uniquement par le
+ * bouton dédié (visible quand il reste moins de 10 % de
+ * salissures) — jamais automatique, pour rester un coup d'œil
+ * pédagogique et non un aimbot.
+ */
+interface CleanlinessWave {
+  startedAt: number;
+  rects: HighlightRect[];
+}
+
+/**
  * Emoji représentatif de chaque outil, dessiné sur le curseur.
  */
 const TOOL_EMOJIS: Record<string, string> = {
@@ -191,21 +214,56 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   private detachPointerListeners?: () => void;
 
   // Gains accumulés pendant la partie en cours (valeur exacte,
-  // utilisée pour le plafond de récompense éventuel).
+  // sert uniquement aux effets visuels sous le pinceau : les
+  // gouttelettes et éclats dorés). Le gain « réel » n'est versé
+  // qu'une fois la carte terminée — rien n'est affiché en continu.
   private earnedMoney = 0;
 
-  // Même valeur exposée à la vue : mise à jour throttlée depuis
-  // la boucle de rendu (jamais dans les écouteurs du pointeur).
-  readonly sessionEarnings = signal(0);
+  // Horodatage du dernier « ping » doré (throttle audio des gains).
+  private lastEarningsPing = 0;
 
-  // Horodatage de la dernière remontée des gains de session.
-  private lastEarningsPush = 0;
+  /**
+   * Chronomètre de la partie en cours (ms). Démarré quand le
+   * premier coup de pinceau est porté, figé à la validation de
+   * la carte : c'est lui qui détermine les étoiles et le record.
+   */
+  readonly elapsedMs = signal(0);
 
-  // Libellé d'affichage des gains de session (+X $ sous le %.).
-  readonly sessionEarningsLabel = computed(() => {
-    const earned = Math.floor(this.sessionEarnings());
-    return earned > 0 ? `+${earned} $` : '';
-  });
+  private runStartedAt = 0;
+  private runFinished = false;
+
+  // Dernier temps formaté poussé vers la vue : le signal n'est
+  // mis à jour que lorsque l'affichage change vraiment (une
+  // seconde sur deux environ), jamais à chaque image.
+  private lastElapsedShown = -1;
+
+  /**
+   * Onde de propreté en cours d'affichage (voir CleanlinessWave).
+   * Sa présence suffit à faire clignoter le bouton dans le gabarit.
+   */
+  private activeWave?: CleanlinessWave;
+
+  // Durée totale de l'animation d'une onde (pulsations incluses).
+  private static readonly WAVE_DURATION_MS = 1600;
+
+  // Taille d'une cellule du quadrillage analysé par l'onde.
+  private static readonly WAVE_CELL_SIZE = 80;
+
+  /**
+   * Seuil de salissure (en % de la capacité initiale de la
+   * cellule) au-dessus duquel une zone est considérée comme
+   * « oubliée » et mérite d'être surlignée.
+   */
+  private static readonly WAVE_DIRT_THRESHOLD = 20;
+
+  /**
+   * Le bouton « zones oubliées » n'apparaît que lorsqu'il reste
+   * moins de 10 % de salissures sur la carte : à ce stade, un
+   * dernier regard est utile ; avant, il faudrait tout montrer.
+   */
+  readonly showWaveButton = computed(
+    () => this.mapReward() === 0 && this.progress() >= 90
+  );
 
   /**
    * Particules visuelles « juice » : gouttelettes projetées quand
@@ -505,12 +563,13 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       this.activeMap().dirtDensity
     );
 
-    // Réinitialise les gains de la partie.
+    // Réinitialise les gains de la partie et le chrono.
     this.earnedMoney = 0;
-    this.sessionEarnings.set(0);
+    this.resetRunTimer();
     this.mapReward.set(0);
     this.progress.set(0);
     this.particles.length = 0;
+    this.activeWave = undefined;
 
     // Affichage initial, puis boucle de rendu continue :
     // le canvas n'est dessiné qu'ici, jamais dans les écouteurs.
@@ -1063,13 +1122,14 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       // Gouttelettes de salissure arrachée sous le pinceau.
       this.spawnDirtSpray(result.removed, tool.radius);
 
-      // Remontée throttlée vers la vue (le calcul des gains a lieu
-      // hors change detection : seul ce signal traverse la vue).
+      // Un « ping » doré discret, throttlé : la récompense réelle
+      // n'est versée qu'en fin de carte, ce son rythme simplement
+      // l'effort en cours (comme dans un idle game).
       const now = performance.now();
 
-      if (now - this.lastEarningsPush >= 250) {
-        this.lastEarningsPush = now;
-        this.sessionEarnings.set(Math.floor(this.earnedMoney));
+      if (now - this.lastEarningsPing >= 700) {
+        this.lastEarningsPing = now;
+        this.audio.playMoneyPing(false);
       }
     }
   }
@@ -1200,7 +1260,8 @@ export class GameScreen implements AfterViewInit, OnDestroy {
         lightX,
         lightY,
         tool?.radius ?? 40,
-        this.WIDTH
+        this.WIDTH,
+        this.pointerInside
       );
 
     } else {
