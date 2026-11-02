@@ -233,9 +233,19 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   private runFinished = false;
 
   // Dernier temps formaté poussé vers la vue : le signal n'est
-  // mis à jour que lorsque l'affichage change vraiment (une
-  // seconde sur deux environ), jamais à chaque image.
+  // mis à jour que lorsque l'affichage change vraiment (chaque
+  // seconde), jamais à chaque image.
   private lastElapsedShown = -1;
+
+  // Dernière position du pointeur + son horodatage, pour estimer
+  // la vitesse de frottement (pilotte le filtre du son de brosse).
+  private lastPointerX = 0;
+  private lastPointerY = 0;
+  private lastPointerMoveAt = 0;
+
+  // Le chrono et les sons de frottement ne démarrent qu'au tout
+  // premier coup de pinceau de la partie (et non au survol).
+  private runStarted = false;
 
   /**
    * Onde de propreté en cours d'affichage (voir CleanlinessWave).
@@ -281,6 +291,56 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   // Petit tremblement du halo la nuit (lanterne vivante).
   private flickerPhase = 0;
 
+  /**
+   * Temps affiché dans le HUD (mm:ss). Dérivé d'`elapsedMs`, qui
+   * n'est mis à jour que lorsque la seconde affichée change.
+   */
+  readonly elapsedLabel = computed(() => {
+
+    const totalSeconds = Math.floor(this.elapsedMs() / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+
+    return `${minutes}:${String(seconds).padStart(2, '0')}`;
+  });
+
+  /**
+   * Étoiles obtenues par la partie qui vient d'être validée
+   * (affichées dans le menu de victoire).
+   */
+  readonly victoryStars = signal(0);
+
+  /**
+   * Le temps de cette partie est-il un nouveau record de la carte ?
+   */
+  readonly victoryIsRecord = signal(false);
+
+  /**
+   * Meilleur temps connu pour la carte active, formaté en secondes
+   * entières (« 42 s ») — affiche « — » tant qu'aucune partie n'a
+   * été terminée sur cette carte.
+   */
+  readonly bestTimeLabel = computed(() => {
+
+    const record = this.gamingState.getMapRecord(this.activeMap().id);
+
+    if (!record) return '—';
+
+    return `${Math.max(1, Math.round(record.bestTimeMs / 1000))} s`;
+  });
+
+  /**
+   * Étoiles du record actuel de la carte active (0 si jamais jouée),
+   * sous forme « ★★☆☆☆ » pour la sélection et le HUD.
+   */
+  readonly activeMapStarsLabel = computed(() => {
+
+    const record = this.gamingState.getMapRecord(this.activeMap().id);
+    const stars = record?.stars ?? 0;
+
+    return '★'.repeat(stars) + '☆'.repeat(5 - stars);
+  });
+
   // Récompense versée à la fin de la partie.
   readonly mapReward = signal(0);
 
@@ -313,6 +373,11 @@ export class GameScreen implements AfterViewInit, OnDestroy {
     this.detachPointerListeners?.();
     this.resizeObserver?.disconnect();
     this.stopRenderLoop();
+
+    // Coupe frottement et ambiance : le son ne doit pas survivre
+    // à la sortie de l'écran de jeu.
+    this.audio.stopScrub();
+    this.audio.stopAmbience();
   }
 
   // --------------------------------
@@ -570,6 +635,12 @@ export class GameScreen implements AfterViewInit, OnDestroy {
     this.progress.set(0);
     this.particles.length = 0;
     this.activeWave = undefined;
+    this.victoryStars.set(0);
+    this.victoryIsRecord.set(false);
+
+    // Ambiance sonore du monde (inoffensive tant que l'AudioContext
+    // n'a pas été démarré par un premier geste utilisateur).
+    this.audio.startAmbience(this.activeMap().worldId as WorldAmbience);
 
     // Affichage initial, puis boucle de rendu continue :
     // le canvas n'est dessiné qu'ici, jamais dans les écouteurs.
@@ -1557,6 +1628,122 @@ export class GameScreen implements AfterViewInit, OnDestroy {
         // Non critique : certains navigateurs bloquent la vibration.
       }
     }
+  }
+
+  // --------------------------------
+  // Chronomètre de partie
+  // --------------------------------
+
+  /**
+   * Remet le chrono à zéro et arme un nouveau départ : le temps
+   * ne démarrera qu'au premier coup de pinceau effectif.
+   */
+  private resetRunTimer(): void {
+    this.runStartedAt = 0;
+    this.runFinished = false;
+    this.runStarted = false;
+    this.lastElapsedShown = -1;
+    this.elapsedMs.set(0);
+  }
+
+  /**
+   * Démarre le chrono au premier nettoyage de la partie.
+   * Appelé depuis `applyDirtyDelta()` — jamais depuis un simple
+   * survol du canvas.
+   */
+  private startRunIfNeeded(): void {
+    if (this.runStarted || this.runFinished) return;
+    this.runStarted = true;
+    this.runStartedAt = performance.now();
+  }
+
+  /**
+   * Fait avancer l'affichage du chrono. Appelé par la boucle
+   * d'animation : le signal `elapsedMs` n'est mis à jour que si
+   * la seconde affichée change (une notification par seconde au
+   * maximum, jamais par image).
+   */
+  private tickRunTimer(): void {
+    if (!this.runStarted || this.runFinished) return;
+
+    const elapsed = Math.floor((performance.now() - this.runStartedAt) / 1000);
+
+    if (elapsed === this.lastElapsedShown) return;
+
+    this.lastElapsedShown = elapsed;
+    this.elapsedMs.set(elapsed * 1000);
+  }
+
+  // --------------------------------
+  // Onde de propreté (zones oubliées)
+  // --------------------------------
+
+  /**
+   * Déclenche l'onde de propreté : parcourt la carte en cellules
+   * et surligne ~1,6 s durant celles qui contiennent encore plus de
+   * WAVE_DIRT_THRESHOLD % de leur salissure initiale. Le bouton qui
+   * lance cette action n'apparaît qu'en fin de partie (moins de
+   * 10 % de saleté restante) : c'est un coup d'œil pédagogique,
+   * pas un aimbot — aucune zone propre ne clignote.
+   */
+  triggerCleanlinessWave(): void {
+    if (!this.dirtEngine || this.activeWave) return;
+
+    const rects: HighlightRect[] = [];
+    const cell = GameScreen.WAVE_CELL_SIZE;
+
+    for (let y = 0; y < this.HEIGHT; y += cell) {
+      for (let x = 0; x < this.WIDTH; x += cell) {
+
+        const width = Math.min(cell, this.WIDTH - x);
+        const height = Math.min(cell, this.HEIGHT - y);
+
+        const percent = this.dirtEngine.getDirtPercentageInArea(x, y, width, height);
+
+        if (percent >= GameScreen.WAVE_DIRT_THRESHOLD) {
+          rects.push({ x, y, width, height });
+        }
+      }
+    }
+
+    if (rects.length === 0) return;
+
+    this.activeWave = { startedAt: performance.now(), rects };
+
+    // Petit retour haptique + clic d'interface discret.
+    this.vibrate(15);
+  }
+
+  /**
+   * Dessine l'onde active : pulsations dorées autour des zones
+   * oubliées, qui s'estompent sur toute la durée de l'animation.
+   */
+  private drawCleanlinessWave(): void {
+    if (!this.activeWave || !this.ctx) return;
+
+    const age = performance.now() - this.activeWave.startedAt;
+
+    if (age >= GameScreen.WAVE_DURATION_MS) {
+      this.activeWave = undefined;
+      return;
+    }
+
+    const ctx = this.ctx;
+    const scale = this.canvas.width / this.WIDTH;
+
+    // Deux pulsations successives, puis fondu de fermeture.
+    const pulse = 0.5 + 0.5 * Math.sin((age / GameScreen.WAVE_DURATION_MS) * Math.PI * 4);
+    const fade = 1 - age / GameScreen.WAVE_DURATION_MS;
+
+    ctx.save();
+    ctx.strokeStyle = `rgba(255, 214, 98, ${(0.35 + 0.45 * pulse) * fade})`;
+    ctx.lineWidth = 3;
+
+    for (const rect of this.activeWave.rects) {
+      ctx.strokeRect(rect.x * scale, rect.y * scale, rect.width * scale, rect.height * scale);
+    }
+
+    ctx.restore();
   }
 
   // --------------------------------
