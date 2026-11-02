@@ -39,6 +39,69 @@
       class="game-canvas"
     ></canvas>
 
+    <!-- Menu de victoire : s'affiche par-dessus le jeu dès que
+         la récompense est obtenue. Le jeu est en pause tant que
+         ce menu est ouvert. -->
+    @if (victoryMenuOpen()) {
+
+      <div class="victory-overlay">
+
+        <div class="victory-panel">
+
+          <h2>🎉 Carte terminée !</h2>
+
+          <p class="victory-reward">
+            {{ activeMap().name }} est propre à {{ progress() | number:'1.0-0' }} %.
+            Récompense : <strong>+{{ mapReward() }} $</strong>
+          </p>
+
+          <nav class="victory-actions">
+
+            <button
+              type="button"
+              class="primary"
+              (click)="restartFromVictory()"
+            >
+              Recommencer
+            </button>
+
+            <button
+              type="button"
+              (click)="goMaps()"
+            >
+              Changer de carte
+            </button>
+
+            <button
+              type="button"
+              (click)="goShop()"
+            >
+              Boutique
+            </button>
+
+            <button
+              type="button"
+              (click)="goMenu()"
+            >
+              Menu principal
+            </button>
+
+          </nav>
+
+          <button
+            type="button"
+            class="close-victory"
+            (click)="closeVictoryMenu()"
+          >
+            Fermer · continuer à frotter les derniers résidus
+          </button>
+
+        </div>
+
+      </div>
+
+    }
+
   </section>
 
   <footer class="game-footer">
