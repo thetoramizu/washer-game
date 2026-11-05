@@ -12,7 +12,8 @@ import {
   clearSave,
   loadSave,
   persistedList,
-  persistedSignal
+  persistedSignal,
+  writeSave
 } from './save-storage';
 
 /**
@@ -34,6 +35,9 @@ const SAVE_KEYS = {
   upgrades: 'upgrades',
   unlockedMaps: 'unlocked-maps',
   sound: 'sound',
+  firstVisitDone: 'first-visit-done',
+  completedMaps: 'completed-maps',
+  bestTimes: 'best-times',
 } as const;
 
 /**
@@ -43,6 +47,13 @@ const DEFAULT_MONEY = 250;
 const DEFAULT_TOOLS = ['sponge', 'brush'];
 const DEFAULT_EQUIPPED_TOOL = 'sponge';
 const DEFAULT_MAPS = ['terrace', 'attic-painting'];
+
+/**
+ * Gains de la première visite : un petit bonus offert au joueur
+ * qui démarre, pour qu'il puisse acheter son premier outil ou sa
+ * première amélioration sans attendre.
+ */
+const FIRST_VISIT_BONUS = 100;
 
 @Service()
 export class GamingState {
@@ -62,7 +73,28 @@ export class GamingState {
     autoSave(this.upgradeInventory, SAVE_KEYS.upgrades);
     autoSave(this.unlockedMaps, SAVE_KEYS.unlockedMaps);
     autoSave(this.soundEnabled, SAVE_KEYS.sound);
+    autoSave(this.completedMaps, SAVE_KEYS.completedMaps);
+    autoSave(this.bestTimes, SAVE_KEYS.bestTimes);
+
+    // ---------------------------------
+    // Bonus de première visite
+    // ---------------------------------
+    // Un nouveau profil reçoit un petit capital de départ pour
+    // pouvoir acheter son premier outil ou sa première
+    // amélioration sans attendre.
+    if (!loadSave<boolean>(SAVE_KEYS.firstVisitDone)) {
+      this.money.update(value => value + FIRST_VISIT_BONUS);
+      this.pendingWelcomeBonus.set(FIRST_VISIT_BONUS);
+      writeSave(SAVE_KEYS.firstVisitDone, true);
+    }
   }
+
+  /**
+   * Montant du bonus de bienvenue offert au premier lancement,
+   * en attente d'affichage. Le menu principal lit puis remet ce
+   * signal à zéro après avoir montré le message.
+   */
+  readonly pendingWelcomeBonus = signal<number>(0);
 
   /**
    * Efface toute la progression sauvegardée et recharge
@@ -77,8 +109,16 @@ export class GamingState {
     this.equippedToolId.set(DEFAULT_EQUIPPED_TOOL);
     this.upgradeInventory.set({});
     this.unlockedMaps.set([...DEFAULT_MAPS]);
+    this.completedMaps.set([]);
+    this.bestTimes.set({});
     this.soundEnabled.set(true);
     this.currentScreen.set('main-menu');
+
+    // Après une suppression de sauvegarde, on considère que le
+    // joueur recommence : le bonus de première visite lui sera
+    // de nouveau offert au prochain chargement complet, mais pas
+    // en plein milieu de la session en cours.
+    writeSave(SAVE_KEYS.firstVisitDone, true);
   }
 
   // --------------------------------
@@ -314,6 +354,65 @@ unlockMap(map: GameMap): boolean {
     (entry): entry is string =>
       typeof entry === 'string' && GAME_MAPS.some(map => map.id === entry)
   );
+
+  /**
+   * Identifiants des cartes terminées au moins une fois
+   * (récompense encaissée). Sauvegardé entre les sessions.
+   */
+  readonly completedMaps = persistedSignal<string[]>(
+    SAVE_KEYS.completedMaps,
+    []
+  );
+
+  /**
+   * Meilleurs temps (en secondes) par carte terminée.
+   * Alimenté par l'écran de jeu à la victoire ; sauvegardé.
+   */
+  readonly bestTimes = persistedSignal<Record<string, number>>(
+    SAVE_KEYS.bestTimes,
+    {}
+  );
+
+  /**
+   * Marque une carte comme terminée et met à jour son meilleur
+   * temps si `timeSeconds` est fourni et améliore le record.
+   */
+  recordMapCompletion(mapId: string, timeSeconds?: number): void {
+
+    if (!GAME_MAPS.some(map => map.id === mapId)) return;
+
+    if (!this.completedMaps().includes(mapId)) {
+      this.completedMaps.update(ids => [...ids, mapId]);
+    }
+
+    if (typeof timeSeconds === 'number' && Number.isFinite(timeSeconds) && timeSeconds > 0) {
+      this.bestTimes.update(times => {
+        const previous = times[mapId];
+
+        // Record uniquement si c'est un nouveau temps ou le premier.
+        if (previous !== undefined && previous <= timeSeconds) {
+          return times;
+        }
+
+        return { ...times, [mapId]: Math.round(timeSeconds * 10) / 10 };
+      });
+    }
+  }
+
+  /**
+   * Retourne le meilleur temps d'une carte, ou `undefined`
+   * si elle n'a jamais été terminée chronométrée.
+   */
+  getBestTime(mapId: string): number | undefined {
+    return this.bestTimes()[mapId];
+  }
+
+  /**
+   * Une carte est-elle « 100 % » ? (terminée une première fois)
+   */
+  isMapCompleted(mapId: string): boolean {
+    return this.completedMaps().includes(mapId);
+  }
 
   /**
    * Lit l'outil équipé sauvegardé, en retombant sur l'outil par

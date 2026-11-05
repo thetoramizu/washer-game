@@ -225,3 +225,165 @@ footer {
     font-size: 26px;
   }
 }
+
+/* --------------------------------
+   Onglets Outils / Cartes
+-------------------------------- */
+
+.shop-tabs {
+  display: flex;
+  gap: 10px;
+
+  max-width: 1100px;
+  margin: 0 auto 24px;
+}
+
+.shop-tabs button {
+  width: auto;
+  padding: 10px 22px;
+
+  border: 1px solid #e5dcca;
+  border-radius: 30px;
+
+  background: #fffaf0;
+  color: #625d53;
+
+  font-size: 14px;
+  cursor: pointer;
+
+  transition: 0.15s;
+}
+
+.shop-tabs button.active {
+  background: #78a887;
+  border-color: #78a887;
+  color: white;
+}
+
+/* --------------------------------
+   Valeurs boostées par améliorations
+-------------------------------- */
+
+.buffed {
+  color: #2f7d4f !important;
+}
+
+.upgraded-badge {
+  padding: 4px 10px;
+  border-radius: 20px;
+
+  background: #e2f3e6;
+  color: #2f7d4f;
+
+  font-size: 11px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.tool-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ownership {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.equip-button {
+  width: auto;
+  padding: 6px 14px;
+
+  background: #cfe6f8;
+  color: #3d6f9e;
+
+  font-size: 12px;
+}
+
+.equip-button:hover {
+  background: #b9d9f2;
+}
+
+/* --------------------------------
+   Niveaux d'amélioration
+-------------------------------- */
+
+.level-pips {
+  display: flex;
+  gap: 4px;
+
+  margin-top: 4px;
+}
+
+.level-pips span {
+  width: 14px;
+  height: 6px;
+  border-radius: 3px;
+
+  background: #ece4d2;
+}
+
+.level-pips span.filled {
+  background: #78a887;
+}
+
+.upgrade-preview {
+  color: #2f7d4f !important;
+  font-style: italic;
+}
+
+.upgrade-lock-hint {
+  margin: 10px 0 0;
+
+  color: #a17b3d;
+  font-size: 12px;
+}
+
+/* --------------------------------
+   Cartes (onglet « Cartes »)
+-------------------------------- */
+
+.map-card {
+  background: white;
+  border-radius: 14px;
+  overflow: hidden;
+
+  border: 1px solid #e5dcca;
+
+  box-shadow: 0 4px 12px rgba(70, 60, 40, 0.06);
+}
+
+.map-preview {
+  position: relative;
+  height: 90px;
+}
+
+.completed-badge {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+
+  padding: 4px 10px;
+  border-radius: 20px;
+
+  background: rgba(255, 255, 255, 0.9);
+  color: #2f7d4f;
+
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.map-content {
+  padding: 20px;
+}
+
+.best-time {
+  margin: 0 0 12px;
+
+  color: #a17b3d;
+  font-size: 13px;
+  font-weight: bold;
+}
