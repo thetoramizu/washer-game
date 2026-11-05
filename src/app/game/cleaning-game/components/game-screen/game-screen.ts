@@ -154,6 +154,75 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   // Gains accumulés pendant la partie en cours.
   private earnedMoney = 0;
 
+  // Chronomètre de la partie en cours : horodatage du (re)démarrage
+  // et temps écoulé cumulé hors pause (pour les meilleurs temps).
+  private runStartedAt = performance.now();
+  private pausedAccumMs = 0;
+  private pauseStartedAt: number | null = null;
+
+  // Temps affiché dans l'en-tête, rafraîchi au plus 2 fois/seconde.
+  readonly elapsedSeconds = signal(0);
+  private lastTimerUpdate = 0;
+
+  /**
+   * Temps écoulé depuis le début de la partie, pauses déduites,
+   * en secondes.
+   */
+  private currentRunSeconds(): number {
+
+    const now = performance.now();
+
+    const runningMs =
+      now - this.runStartedAt - this.pausedAccumMs -
+      (this.pauseStartedAt !== null ? now - this.pauseStartedAt : 0);
+
+    return Math.max(0, runningMs / 1000);
+  }
+
+  /**
+   * À appeler quand le jeu passe en pause (menu pause ou victoire)
+   * pour que le chronomètre ne tourne plus.
+   */
+  private timerPauseStart(): void {
+
+    if (this.pauseStartedAt === null) {
+      this.pauseStartedAt = performance.now();
+    }
+  }
+
+  private timerPauseEnd(): void {
+
+    if (this.pauseStartedAt !== null) {
+      this.pausedAccumMs += performance.now() - this.pauseStartedAt;
+      this.pauseStartedAt = null;
+    }
+  }
+
+  /**
+   * Remet le chronomètre à zéro (nouvelle carte, recommencer).
+   */
+  private resetTimer(): void {
+
+    this.runStartedAt = performance.now();
+    this.pausedAccumMs = 0;
+    this.pauseStartedAt = null;
+
+    this.elapsedSeconds.set(0);
+    this.lastTimerUpdate = 0;
+  }
+
+  /**
+   * Formate un temps en mm:ss pour l'affichage.
+   */
+  formatTime(seconds: number): string {
+
+    const total = Math.max(0, Math.floor(seconds));
+    const minutes = Math.floor(total / 60);
+    const rest = total % 60;
+
+    return `${minutes}:${rest.toString().padStart(2, '0')}`;
+  }
+
   // Récompense versée à la fin de la partie.
   readonly mapReward = signal(0);
 
