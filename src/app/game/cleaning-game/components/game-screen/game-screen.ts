@@ -15,31 +15,18 @@ import { GamingState } from '../../../services/gaming-state';
 import { AudioService } from '../../../services/audio-service';
 import { CleaningTool } from '../../../models/cleaning-tool';
 import { DecimalPipe } from '@angular/common';
-
-/**
- * Gouttelette émise sous le curseur pendant le nettoyage :
- * particule physique simple (position, vélocité, durée de vie),
- * dessinée dans la boucle de rendu — jamais via le DOM.
- */
-interface Droplet {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  radius: number;
-  life: number;
-  maxLife: number;
-  color: string;
-}
-
-/**
- * Secousse d'écran : translation aléatoire brève appliquée à
- * tout le canvas (à la victoire, ou en retour tactile léger).
- */
-interface ScreenShake {
-  intensity: number;
-  until: number;
-}
+import { paintCleanSurface } from './surface-painter';
+import { drawCursorRing } from './cursor-renderer';
+import {
+  computeShakeOffset,
+  drawDroplets,
+  Droplet,
+  scatterRecentDroplets,
+  ScreenShake,
+  spawnDroplets,
+  createShake,
+  updateDroplets,
+} from './droplets';
 
 /**
  * Écran de jeu : canvas, nettoyage et barre d'outils.
@@ -58,11 +45,6 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   // Largeur native maximale du canvas : au-delà, la carte est
   // rendue à une résolution plafonnée pour rester fluide.
   private static readonly MAX_CANVAS_WIDTH = 1400;
-
-  // Socle de récompense versé même si les gains accumulés pendant
-  // la partie restent modestes (cohérent avec des améliorations à
-  // partir de 100 $).
-  private static readonly MINIMUM_MAP_REWARD = 25;
 
   // Largeur native minimale du canvas : en dessous, la carte
   // serait trop petite pour être jouable ; elle débordera donc
@@ -288,6 +270,9 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   // --------------------------------
   // Particules & secousses d'écran
   // --------------------------------
+  // La simulation et le dessin sont délégués au module pur
+  // `droplets.ts` ; le composant ne conserve que l'état courant
+  // et la garde d'accessibilité « réduction de mouvement ».
 
   // Gouttelettes actives, mises à jour et dessinées par la
   // boucle de rendu (jamais par les événements du pointeur).
@@ -301,103 +286,42 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   private shake: ScreenShake | null = null;
 
   // Respecte le réglage d'accessibilité du système : en
-  // « réduction de mouvement », pas de tremblement d'écran.
+  // « réduction de mouvement », pas de particules ni de
+  // tremblement d'écran.
   private readonly reduceMotion =
     typeof window !== 'undefined' &&
     !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
   /**
-   * Déclenche une secousse d'écran brève.
+   * Déclenche une secousse d'écran brève (inerte si l'utilisateur
+   * demande une réduction des animations).
    *
    * @param intensity Amplitude maximale en pixels canvas.
-   * @param durationDurée en millisecondes.
+   * @param duration Durée en millisecondes.
    */
   private triggerShake(intensity: number, duration: number): void {
 
     if (this.reduceMotion) return;
 
-    this.shake = {
-      intensity,
-      until: performance.now() + duration
-    };
+    this.shake = createShake(intensity, duration);
   }
 
   /**
-   * Émet quelques gouttelettes autour du curseur, projetées
-   * vers l'extérieur avec une légère gravité.
+   * Émet quelques gouttelettes autour du curseur (inerte si
+   * l'utilisateur demande une réduction des animations).
    */
-  private spawnDroplets(count: number, color: string): void {
+  private emitDroplets(count: number, color: string): void {
 
     if (this.reduceMotion) return;
 
-    for (let i = 0; i < count; i++) {
-
-      const angle = Math.random() * Math.PI * 2;
-      const speed = 40 + Math.random() * 120;
-
-      const maxLife = 0.35 + Math.random() * 0.45;
-
-      this.droplets.push({
-        x: this.pointerX,
-        y: this.pointerY,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed - 40,
-        radius: 1.5 + Math.random() * 2.5,
-        life: maxLife,
-        maxLife,
-        color
-      });
-    }
-
-    // Limite le nombre total de particules.
-    if (this.droplets.length > GameScreen.MAX_DROPLETS) {
-      this.droplets.splice(
-        0,
-        this.droplets.length - GameScreen.MAX_DROPLETS
-      );
-    }
-  }
-
-  /**
-   * Met à jour la physique des gouttelettes (gravité, vieillesse).
-   */
-  private updateDroplets(deltaSeconds: number): void {
-
-    for (let i = this.droplets.length - 1; i >= 0; i--) {
-
-      const drop = this.droplets[i];
-
-      drop.life -= deltaSeconds;
-
-      if (drop.life <= 0) {
-        this.droplets.splice(i, 1);
-        continue;
-      }
-
-      drop.vy += 380 * deltaSeconds; // gravité
-      drop.x += drop.vx * deltaSeconds;
-      drop.y += drop.vy * deltaSeconds;
-    }
-  }
-
-  /**
-   * Dessine les gouttelettes avec un fondu lié à leur âge.
-   */
-  private drawDroplets(): void {
-
-    for (const drop of this.droplets) {
-
-      const alpha = Math.max(drop.life / drop.maxLife, 0) * 0.8;
-
-      this.ctx.globalAlpha = alpha;
-      this.ctx.fillStyle = drop.color;
-
-      this.ctx.beginPath();
-      this.ctx.arc(drop.x, drop.y, drop.radius, 0, Math.PI * 2);
-      this.ctx.fill();
-    }
-
-    this.ctx.globalAlpha = 1;
+    spawnDroplets(
+      this.droplets,
+      count,
+      color,
+      this.pointerX,
+      this.pointerY,
+      GameScreen.MAX_DROPLETS,
+    );
   }
 
   ngAfterViewInit(): void {
@@ -699,423 +623,19 @@ export class GameScreen implements AfterViewInit, OnDestroy {
   /**
    * Dessine la surface propre selon le style de la carte.
    *
-   * Chaque monde possède son ambiance : dalles de pierre pour
-   * la maison, toile encadrée pour la peinture, asphalte pour
-   * l'extérieur, chaussée presque noire pour la nuit.
+   * Les motifs concrets (dalles, asphalte, toile…) vivent dans
+   * `surface-painter.ts` ; ici on prépare simplement le contexte
+   * à l'échelle du tampon moteur et on délègue le dessin.
    */
   private generateCleanSurface(): void {
-    const ctx = this.cleanCtx;
 
     // La surface est dessinée à l'échelle du tampon du moteur.
-    const width = this.dirtEngine.bufferWidth;
-    const height = this.dirtEngine.bufferHeight;
-
-    switch (this.activeMap().surfaceStyle) {
-
-      case 'canvas':
-        this.drawPaintingSurface(ctx, width, height);
-        break;
-
-      case 'road':
-        this.drawRoadSurface(ctx, width, height);
-        break;
-
-      case 'night':
-        this.drawNightSurface(ctx, width, height);
-        break;
-
-      case 'garden':
-        this.drawGardenSurface(ctx, width, height);
-        break;
-
-      case 'concrete':
-        this.drawConcreteSurface(ctx, width, height);
-        break;
-
-      default:
-        this.drawTileSurface(ctx, width, height);
-    }
-  }
-
-  /**
-   * Terrain commun : petites variations de teinte en plus des
-   * motifs propres à chaque surface.
-   */
-  private addSpeckle(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number,
-    color: string,
-    count = 450
-  ): void {
-
-    ctx.fillStyle = color;
-
-    for (let i = 0; i < count; i++) {
-      ctx.fillRect(
-        Math.random() * width,
-        Math.random() * height,
-        1,
-        1
-      );
-    }
-  }
-
-  /**
-   * Monde Maison — terrasse : dalles de pierre.
-   */
-  private drawTileSurface(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number
-  ): void {
-
-    ctx.fillStyle = '#aaa99c';
-    ctx.fillRect(0, 0, width, height);
-
-    // Dalles de pierre (adaptées à la résolution réduite).
-    const tileSize = 25;
-
-    for (let x = 0; x < width; x += tileSize) {
-      for (let y = 0; y < height; y += tileSize) {
-
-        ctx.fillStyle =
-          Math.random() > 0.5 ? '#b5b4a6' : '#a5a496';
-
-        ctx.fillRect(
-          x + 1,
-          y + 1,
-          tileSize - 2,
-          tileSize - 2
-        );
-      }
-    }
-
-    this.addSpeckle(ctx, width, height, 'rgba(70, 70, 60, 0.08)');
-  }
-
-  /**
-   * Monde Maison — jardin : terre et touffes d'herbe.
-   */
-  private drawGardenSurface(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number
-  ): void {
-
-    ctx.fillStyle = '#7d8459';
-    ctx.fillRect(0, 0, width, height);
-
-    // Touffes d'herbe de deux teintes.
-    for (let i = 0; i < 900; i++) {
-
-      ctx.fillStyle =
-        Math.random() > 0.5 ? '#87905f' : '#737b52';
-
-      ctx.fillRect(
-        Math.random() * width,
-        Math.random() * height,
-        3,
-        2
-      );
-    }
-
-    // Cailloux çà et là.
-    for (let i = 0; i < 60; i++) {
-
-      ctx.fillStyle = 'rgba(150, 145, 130, 0.55)';
-
-      ctx.beginPath();
-      ctx.arc(
-        Math.random() * width,
-        Math.random() * height,
-        1.5 + Math.random() * 2,
-        0,
-        Math.PI * 2
-      );
-      ctx.fill();
-    }
-  }
-
-  /**
-   * Monde Maison — sous-sol : béton brut avec joints.
-   */
-  private drawConcreteSurface(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number
-  ): void {
-
-    ctx.fillStyle = '#83867f';
-    ctx.fillRect(0, 0, width, height);
-
-    // Grandes plaques de béton séparées par des joints sombres.
-    const slabSize = 60;
-
-    ctx.strokeStyle = 'rgba(55, 58, 55, 0.5)';
-    ctx.lineWidth = 1;
-
-    for (let x = 0; x < width; x += slabSize) {
-
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, height);
-      ctx.stroke();
-    }
-
-    for (let y = 0; y < height; y += slabSize) {
-
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-      ctx.stroke();
-    }
-
-    // Taches de béton plus clair / plus foncé.
-    for (let i = 0; i < 120; i++) {
-
-      ctx.fillStyle = Math.random() > 0.5
-        ? 'rgba(140, 143, 136, 0.25)'
-        : 'rgba(65, 68, 64, 0.20)';
-
-      ctx.beginPath();
-      ctx.arc(
-        Math.random() * width,
-        Math.random() * height,
-        2 + Math.random() * 6,
-        0,
-        Math.PI * 2
-      );
-      ctx.fill();
-    }
-  }
-
-  /**
-   * Monde Peinture — tableau : cadre boisé et toile peinte.
-   */
-  private drawPaintingSurface(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number
-  ): void {
-
-    // Cadre en bois autour de la toile.
-    const frame = Math.max(10, Math.round(width * 0.03));
-
-    ctx.fillStyle = '#6b4a2f';
-    ctx.fillRect(0, 0, width, height);
-
-    // Relief du cadre (bord interne plus clair).
-    ctx.fillStyle = '#8a6242';
-    ctx.fillRect(
-      frame * 0.35,
-      frame * 0.35,
-      width - frame * 0.7,
-      height - frame * 0.7
+    paintCleanSurface(
+      this.cleanCtx,
+      this.activeMap().surfaceStyle,
+      this.dirtEngine.bufferWidth,
+      this.dirtEngine.bufferHeight,
     );
-
-    // Toile : fond ciel.
-    const canvasX = frame;
-    const canvasY = frame;
-    const canvasW = width - frame * 2;
-    const canvasH = height - frame * 2;
-
-    const sky = ctx.createLinearGradient(
-      0,
-      canvasY,
-      0,
-      canvasY + canvasH
-    );
-
-    sky.addColorStop(0, '#a8c8dd');
-    sky.addColorStop(0.65, '#d8dcc2');
-    sky.addColorStop(1, '#e7dfa8');
-
-    ctx.fillStyle = sky;
-    ctx.fillRect(canvasX, canvasY, canvasW, canvasH);
-
-    // Soleil.
-    ctx.fillStyle = '#f2d98c';
-    ctx.beginPath();
-    ctx.arc(
-      canvasX + canvasW * 0.72,
-      canvasY + canvasH * 0.28,
-      Math.max(6, canvasW * 0.045),
-      0,
-      Math.PI * 2
-    );
-    ctx.fill();
-
-    // Collines en arrière-plan.
-    ctx.fillStyle = '#8fae7c';
-    ctx.beginPath();
-    ctx.moveTo(canvasX, canvasY + canvasH * 0.72);
-    ctx.quadraticCurveTo(
-      canvasX + canvasW * 0.3,
-      canvasY + canvasH * 0.5,
-      canvasX + canvasW * 0.6,
-      canvasY + canvasH * 0.7
-    );
-    ctx.quadraticCurveTo(
-      canvasX + canvasW * 0.8,
-      canvasY + canvasH * 0.8,
-      canvasX + canvasW,
-      canvasY + canvasH * 0.62
-    );
-    ctx.lineTo(canvasX + canvasW, canvasY + canvasH);
-    ctx.lineTo(canvasX, canvasY + canvasH);
-    ctx.closePath();
-    ctx.fill();
-
-    // Pré au premier plan.
-    ctx.fillStyle = '#6f9154';
-    ctx.beginPath();
-    ctx.moveTo(canvasX, canvasY + canvasH * 0.85);
-    ctx.quadraticCurveTo(
-      canvasX + canvasW * 0.5,
-      canvasY + canvasH * 0.75,
-      canvasX + canvasW,
-      canvasY + canvasH * 0.88
-    );
-    ctx.lineTo(canvasX + canvasW, canvasY + canvasH);
-    ctx.lineTo(canvasX, canvasY + canvasH);
-    ctx.closePath();
-    ctx.fill();
-
-    // Empâtes de pinceau : la touche « peinture à l'huile ».
-    for (let i = 0; i < 140; i++) {
-
-      const palette = ['#9dbb85', '#7fa06a', '#c9d3a8', '#e3dcae'];
-
-      ctx.fillStyle =
-        palette[Math.floor(Math.random() * palette.length)];
-
-      ctx.save();
-
-      const px = canvasX + Math.random() * canvasW;
-      const py =
-        canvasY + canvasH * 0.6 + Math.random() * canvasH * 0.4;
-
-      ctx.translate(px, py);
-      ctx.rotate((Math.random() - 0.5) * 0.6);
-      ctx.fillRect(-4, -1.5, 8, 3);
-
-      ctx.restore();
-    }
-
-    // Vernis jauni : léger voile chaud sur toute la toile.
-    ctx.fillStyle = 'rgba(120, 90, 40, 0.08)';
-    ctx.fillRect(canvasX, canvasY, canvasW, canvasH);
-  }
-
-  /**
-   * Monde Extérieur — route / chemin : asphalte et marquages.
-   */
-  private drawRoadSurface(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number
-  ): void {
-
-    // Bandes d'herbe de part et d'autre de la chaussée.
-    ctx.fillStyle = '#6f8a55';
-    ctx.fillRect(0, 0, width, height);
-
-    const roadTop = Math.round(height * 0.16);
-    const roadBottom = Math.round(height * 0.84);
-
-    // Chaussée goudronnée.
-    ctx.fillStyle = '#5c5e60';
-    ctx.fillRect(0, roadTop, width, roadBottom - roadTop);
-
-    // Usure : bandes plus claires là où passent les roues.
-    ctx.fillStyle = 'rgba(110, 112, 114, 0.35)';
-    ctx.fillRect(0, roadTop + (roadBottom - roadTop) * 0.18, width, 8);
-    ctx.fillRect(0, roadTop + (roadBottom - roadTop) * 0.66, width, 8);
-
-    // Liseré blanc en bord de chaussée.
-    ctx.fillStyle = 'rgba(230, 230, 220, 0.85)';
-    ctx.fillRect(0, roadTop + 3, width, 3);
-    ctx.fillRect(0, roadBottom - 6, width, 3);
-
-    // Marque centrale jaune discontinu.
-    const middle = Math.round((roadTop + roadBottom) / 2);
-    const dashWidth = Math.max(14, Math.round(width * 0.03));
-
-    ctx.fillStyle = '#d9b23c';
-
-    for (let x = 0; x < width; x += dashWidth * 2) {
-      ctx.fillRect(x, middle - 2, dashWidth, 4);
-    }
-
-    // Grain de l'asphalte.
-    this.addSpeckle(
-      ctx,
-      width,
-      height,
-      'rgba(30, 30, 30, 0.18)',
-      900
-    );
-
-    // Herbes folles débordant sur la chaussée.
-    ctx.fillStyle = 'rgba(90, 120, 70, 0.6)';
-
-    for (let i = 0; i < 90; i++) {
-
-      const edge = Math.random() > 0.5
-        ? roadTop + Math.random() * 4
-        : roadBottom - Math.random() * 4;
-
-      ctx.fillRect(Math.random() * width, edge, 2, 4);
-    }
-  }
-
-  /**
-   * Monde Nuit — chaussée plongée dans le noir.
-   *
-   * La surface elle-même est très sombre : seul le halo de
-   * l'outil (voir DirtEngine.renderWithFlashlight) révèle ce
-   * qui entoure le curseur.
-   */
-  private drawNightSurface(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number
-  ): void {
-
-    // Fond quasi noir.
-    ctx.fillStyle = '#101218';
-    ctx.fillRect(0, 0, width, height);
-
-    // Bande de chaussée à peine plus claire.
-    const roadTop = Math.round(height * 0.2);
-    const roadBottom = Math.round(height * 0.8);
-
-    ctx.fillStyle = '#1b1e26';
-    ctx.fillRect(0, roadTop, width, roadBottom - roadTop);
-
-    // Marquage central fantomatique.
-    const middle = Math.round((roadTop + roadBottom) / 2);
-    const dashWidth = Math.max(14, Math.round(width * 0.03));
-
-    ctx.fillStyle = 'rgba(190, 180, 120, 0.35)';
-
-    for (let x = 0; x < width; x += dashWidth * 2) {
-      ctx.fillRect(x, middle - 1, dashWidth, 3);
-    }
-
-    // Reflets très discrets de l'asphalte humide.
-    for (let i = 0; i < 70; i++) {
-
-      ctx.fillStyle = 'rgba(70, 80, 100, 0.10)';
-
-      ctx.fillRect(
-        Math.random() * width,
-        roadTop + Math.random() * (roadBottom - roadTop),
-        6,
-        1
-      );
-    }
   }
 
   // --------------------------------
@@ -1146,7 +666,7 @@ export class GameScreen implements AfterViewInit, OnDestroy {
     // signal dans les écouteurs. La boucle d'animation (RAF)
     // nettoie et rend à chaque image, au plus une fois par frame.
     if (this.isCleaning && !this.isPaused) {
-      this.applyDirtyDelta();
+      this.cleanAtPointer();
     }
   }
 
@@ -1192,7 +712,7 @@ export class GameScreen implements AfterViewInit, OnDestroy {
    * ne coûtent ici qu'une seule opération de nettoyage, avec le
    * deltaTime réellement écoulé.
    */
-  private applyDirtyDelta(): void {
+  private cleanAtPointer(): void {
 
     const tool = this.activeTool;
 
@@ -1231,29 +751,24 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       // frottement audible + gerbe de gouttelettes sous l'outil.
       const canvasScale = this.canvas.width / this.WIDTH;
 
-      this.spawnDroplets(
+      this.emitDroplets(
         Math.min(3, 1 + Math.round(result.removed / 40)),
         'rgba(210, 235, 250, 0.9)'
       );
 
       // Les gouttelettes naissent au bord du cercle de l'outil,
       // pas exactement sous le pointeur : projection radiale.
-      for (const drop of this.droplets.slice(-3)) {
-        const angle = Math.random() * Math.PI * 2;
-        drop.x = this.pointerX + Math.cos(angle) * tool.radius * canvasScale * 0.7;
-        drop.y = this.pointerY + Math.sin(angle) * tool.radius * canvasScale * 0.7;
-      }
+      scatterRecentDroplets(
+        this.droplets,
+        this.pointerX,
+        this.pointerY,
+        tool.radius * canvasScale * 0.7,
+        3,
+      );
 
       this.audio.playScrub(Math.min(1, result.removed / 60));
       this.audio.playSplash();
     }
-  }
-
-  /**
-   * Nettoie immédiatement sous le pointeur (pressé de clic).
-   */
-  private cleanAtPointer(): void {
-    this.applyDirtyDelta();
   }
 
   // --------------------------------
@@ -1293,7 +808,7 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       // pause ou sous le menu de victoire : elles s'évanouissent
       // doucement au lieu de rester figées sous le voile.
       if (this.droplets.length > 0) {
-        this.updateDroplets(frameDelta);
+        updateDroplets(this.droplets, frameDelta);
       }
 
       // Le jeu est en pause tant que le menu de victoire est
@@ -1314,7 +829,7 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       // Nettoyage continu tant que le pointeur est pressé :
       // au plus une opération par image.
       if (this.isCleaning) {
-        this.applyDirtyDelta();
+        this.cleanAtPointer();
       }
 
       this.drawFrame();
@@ -1364,29 +879,15 @@ export class GameScreen implements AfterViewInit, OnDestroy {
     // Secousse d'écran : toute la scène
     // est translatée de quelques pixels.
     // ---------------------------------
-    let shakeX = 0;
-    let shakeY = 0;
+    const shakeOffset = computeShakeOffset(this.shake);
 
-    if (this.shake) {
-
-      const remaining = this.shake.until - performance.now();
-
-      if (remaining <= 0) {
-        this.shake = null;
-      } else {
-        // Amplitude décroissante sur la durée restante.
-        const amplitude =
-          this.shake.intensity * (remaining / 450);
-
-        shakeX = (Math.random() * 2 - 1) * amplitude;
-        shakeY = (Math.random() * 2 - 1) * amplitude;
-      }
-    }
+    // La secousse s'auto-purge lorsqu'elle est terminée.
+    this.shake = shakeOffset.shake;
 
     ctx.save();
 
-    if (shakeX !== 0 || shakeY !== 0) {
-      ctx.translate(shakeX, shakeY);
+    if (shakeOffset.x !== 0 || shakeOffset.y !== 0) {
+      ctx.translate(shakeOffset.x, shakeOffset.y);
     }
 
     // Affichage du curseur de nettoyage.
@@ -1432,7 +933,7 @@ export class GameScreen implements AfterViewInit, OnDestroy {
     // sous l'anneau du curseur.
     // ---------------------------------
     if (this.droplets.length > 0) {
-      this.drawDroplets();
+      drawDroplets(ctx, this.droplets);
     }
 
     // ---------------------------------
@@ -1443,90 +944,17 @@ export class GameScreen implements AfterViewInit, OnDestroy {
     // ---------------------------------
     if (this.pointerInside && tool && !this.paused()) {
 
-      // Le rayon de l'outil est exprimé en unités carte :
-      // on le convertit à l'échelle du canvas.
-      const radiusOnCanvas =
-        tool.radius * (this.canvas.width / this.WIDTH);
-
-      // Couleur d'accent propre à l'outil équipé.
-      const accent = GameScreen.toolAccentColor(tool.id);
-
-      // Anneau extérieur : double trait blanc/colouré pour
-      // rester lisible sur les surfaces claires comme sombres.
-      ctx.beginPath();
-      ctx.arc(this.pointerX, this.pointerY, radiusOnCanvas, 0, Math.PI * 2);
-
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
-      ctx.lineWidth = 3;
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.arc(this.pointerX, this.pointerY, radiusOnCanvas, 0, Math.PI * 2);
-
-      ctx.strokeStyle = accent;
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-
-      // Halo intérieur très léger : suggère la zone d'effet.
-      ctx.beginPath();
-      ctx.arc(this.pointerX, this.pointerY, radiusOnCanvas, 0, Math.PI * 2);
-
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.07)';
-      ctx.fill();
-
-      // Anneau pulsé pendant un frottement actif : retour visuel
-      // du nettoyage en cours.
-      if (this.isCleaning) {
-
-        const pulse =
-          0.6 + 0.4 * Math.sin(performance.now() / 90);
-
-        ctx.beginPath();
-        ctx.arc(
-          this.pointerX,
-          this.pointerY,
-          radiusOnCanvas * 0.92,
-          0,
-          Math.PI * 2
-        );
-
-        ctx.strokeStyle = accent;
-        ctx.globalAlpha = 0.35 * pulse;
-        ctx.lineWidth = 5;
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-      }
-
-      // Croix centrale : précision du point d'impact.
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
-      ctx.lineWidth = 1.5;
-
-      ctx.beginPath();
-      ctx.moveTo(this.pointerX - 6, this.pointerY);
-      ctx.lineTo(this.pointerX + 6, this.pointerY);
-      ctx.moveTo(this.pointerX, this.pointerY - 6);
-      ctx.lineTo(this.pointerX, this.pointerY + 6);
-      ctx.stroke();
+      drawCursorRing(
+        ctx,
+        tool,
+        this.pointerX,
+        this.pointerY,
+        this.canvas.width / this.WIDTH,
+        this.isCleaning,
+      );
     }
 
     ctx.restore();
-  }
-
-  /**
-   * Couleur d'accent associée à chaque outil (curseur, anneau).
-   */
-  private static toolAccentColor(toolId: string): string {
-
-    const colors: Record<string, string> = {
-      'sponge': '#f4c95d',
-      'brush': '#7ec4a0',
-      'scraper': '#8ab6d4',
-      'pressure-washer': '#6ea8fe',
-      'steam-cleaner': '#c9a0f5',
-      'overpowered': '#ff8a7a'
-    };
-
-    return colors[toolId] ?? '#ffffff';
   }
 
   // --------------------------------
@@ -1562,18 +990,9 @@ export class GameScreen implements AfterViewInit, OnDestroy {
     // ne sont pas exigés pour valider la carte.
     if (this.dirtEngine.isComplete() && this.mapReward() === 0) {
 
-      // Récompense plafonnée par la taille réelle de la carte :
-      // environ 1 $ pour 100 000 unités de salissure retirées
-      // (soit ~85 $ pour la terrasse, ~340 $ pour le sous-sol),
-      // cohérent avec des améliorations à partir de 100 $.
-      const proportionalReward =
-        this.dirtEngine.getInitialAmount() /
-        DirtEngine.DIRT_UNITS_PER_DOLLAR;
-
-      const reward = Math.max(
-        GameScreen.MINIMUM_MAP_REWARD,
-        Math.round(proportionalReward)
-      );
+      // Récompense calculée par le moteur en fonction de la
+      // taille réelle de la carte (voir DirtEngine.computeMapReward).
+      const reward = this.dirtEngine.computeMapReward();
 
       this.mapReward.set(reward);
       this.gamingState.addMoney(reward);
@@ -1590,7 +1009,7 @@ export class GameScreen implements AfterViewInit, OnDestroy {
       for (let i = 0; i < 24; i++) {
         this.pointerX = Math.random() * this.canvas.width;
         this.pointerY = Math.random() * this.canvas.height;
-        this.spawnDroplets(2, 'rgba(244, 201, 93, 0.9)');
+        this.emitDroplets(2, 'rgba(244, 201, 93, 0.9)');
       }
 
       this.pointerX = savedX;

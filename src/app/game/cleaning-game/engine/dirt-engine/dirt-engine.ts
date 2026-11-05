@@ -1,5 +1,5 @@
-import { CleaningTool } from "../../../models/cleaning-tool";
-import { DirtType } from "../../../models/dirt-type";
+import { CleaningTool } from '../../../models/cleaning-tool';
+import { DirtType } from '../../../models/dirt-type';
 
 /**
  * Résultat retourné après une opération de nettoyage.
@@ -7,6 +7,61 @@ import { DirtType } from "../../../models/dirt-type";
 export interface CleaningResult {
   changed: boolean;
   removed: number;
+}
+
+/**
+ * Effectue la somme d'un tableau typé par blocs de 32 octets.
+ *
+ * Bien plus rapide qu'une boucle octet par octet sur les grandes
+ * cartes (moins de limites de boucle, meilleur pipelining CPU).
+ * Les derniers octets hors bloc complet sont additionnés à part.
+ */
+function sumLayer(layer: Uint8Array): number {
+  const length = layer.length;
+  const aligned = length - (length % 32);
+
+  let blockSum = 0;
+
+  for (let i = 0; i < aligned; i += 32) {
+    blockSum +=
+      layer[i] + layer[i + 1] + layer[i + 2] + layer[i + 3] +
+      layer[i + 4] + layer[i + 5] + layer[i + 6] + layer[i + 7] +
+      layer[i + 8] + layer[i + 9] + layer[i + 10] + layer[i + 11] +
+      layer[i + 12] + layer[i + 13] + layer[i + 14] + layer[i + 15] +
+      layer[i + 16] + layer[i + 17] + layer[i + 18] + layer[i + 19] +
+      layer[i + 20] + layer[i + 21] + layer[i + 22] + layer[i + 23] +
+      layer[i + 24] + layer[i + 25] + layer[i + 26] + layer[i + 27] +
+      layer[i + 28] + layer[i + 29] + layer[i + 30] + layer[i + 31];
+  }
+
+  // Queue du tableau : les octets restants (< 32).
+  for (let i = aligned; i < length; i++) {
+    blockSum += layer[i];
+  }
+
+  return blockSum;
+}
+
+/** Composante RGB d'une couleur de salissure. */
+interface RgbColor {
+  r: number;
+  g: number;
+  b: number;
+}
+
+/**
+ * Convertit une couleur hexadécimale (« #rrggbb ») en composantes
+ * RGB. La conversion est faite une seule fois à la construction du
+ * moteur, loin des boucles de rendu par pixel.
+ */
+function hexToRgb(hex: string): RgbColor {
+  const color = hex.replace('#', '');
+
+  return {
+    r: parseInt(color.substring(0, 2), 16),
+    g: parseInt(color.substring(2, 4), 16),
+    b: parseInt(color.substring(4, 6), 16),
+  };
 }
 
 /**
@@ -53,12 +108,12 @@ export class DirtEngine {
   private layers: Uint8Array[] = [];
 
   /**
- * Quantité totale de salissures présentes
- * juste après la génération de la carte.
- *
- * Cette valeur sert de référence pour calculer
- * la progression du nettoyage.
- */
+   * Quantité totale de salissures présentes
+   * juste après la génération de la carte.
+   *
+   * Cette valeur sert de référence pour calculer
+   * la progression du nettoyage.
+   */
   private initialAmount = 0;
 
   /**
@@ -75,7 +130,7 @@ export class DirtEngine {
   private layerOrders!: Uint8Array;
 
   // Couleurs RGB des différents types de salissures.
-  private dirtColors: { r: number; g: number; b: number }[] = [];
+  private dirtColors: RgbColor[] = [];
 
   /**
    * Multiplicateur de récompense moyen pondéré par la densité
@@ -94,27 +149,16 @@ export class DirtEngine {
    * Cette constante unique règle l'économie du jeu : elle est
    * volontairement élevée pour que les gains restent cohérents
    * avec les prix de la boutique (une centaine de dollars par
-   * carte au niveau de base).
+   * carte au niveau de base). Elle sert aussi de diviseur pour
+   * la récompense de fin de carte (voir computeMapReward).
    */
   static readonly DIRT_UNITS_PER_DOLLAR = 25000;
 
   /**
-   * Nombre d'unités de salissure retirées nécessaire pour valoir
-   * 1 $ de récompense de fin de carte.
-   *
-   * La récompense finale est plafonnée par la taille réelle de la
-   * carte et ne dépend donc ni de l'outil utilisé ni des couches
-   * superposées : impossible de « farmer » des sommes énormes avec
-   * un outil surpuissant ou une carte dense.
+   * Récompense minimale garantie en $ à la validation d'une
+   * carte, quelle que soit sa taille (petites cartes incluses).
    */
-  private static readonly DIRT_UNITS_PER_REWARD_DOLLAR = 100000;
-
-  /**
-   * Récompense maximale versée pour une carte, quel que soit son
-   * nombre de zones de salissure (garde-fou pour les futures très
-   * grandes cartes).
-   */
-  private static readonly MAX_MAP_REWARD = 400;
+  static readonly MINIMUM_MAP_REWARD = 25;
 
   // Tampon interne et son contexte, utilisés pour le rendu
   // basse résolution puis l'agrandissement sur le canvas.
@@ -132,26 +176,15 @@ export class DirtEngine {
 
     // Le tampon de travail est réduit pour garder un rendu fluide
     // sur les grandes cartes.
-    this.bufferWidth = Math.max(
-      1,
-      Math.round(width * DirtEngine.RENDER_SCALE)
-    );
-    this.bufferHeight = Math.max(
-      1,
-      Math.round(height * DirtEngine.RENDER_SCALE)
-    );
+    this.bufferWidth = Math.max(1, Math.round(width * DirtEngine.RENDER_SCALE));
+    this.bufferHeight = Math.max(1, Math.round(height * DirtEngine.RENDER_SCALE));
 
     this.pixelCount = this.bufferWidth * this.bufferHeight;
 
-    // Prépare les tableaux de données.
-    this.layers = dirtTypes.map(
-      () => new Uint8Array(this.pixelCount)
-    );
-
-    // Prépare un ordre indépendant pour chaque pixel.
-    this.layerOrders = new Uint8Array(
-      this.pixelCount * dirtTypes.length
-    );
+    // Prépare les tableaux de données : une couche de quantités et
+    // un ordre indépendant pour chaque pixel.
+    this.layers = dirtTypes.map(() => new Uint8Array(this.pixelCount));
+    this.layerOrders = new Uint8Array(this.pixelCount * dirtTypes.length);
 
     // Tampon intermédiaire pour l'agrandissement final.
     this.buffer = new ImageData(this.bufferWidth, this.bufferHeight);
@@ -162,78 +195,76 @@ export class DirtEngine {
     this.bufferCtx = this.bufferCanvas.getContext('2d')!;
 
     // Convertit les couleurs hexadécimales en RGB une seule fois.
-    this.dirtColors = dirtTypes.map(dirt => {
-      const color = dirt.color.replace('#', '');
-
-      return {
-        r: parseInt(color.substring(0, 2), 16),
-        g: parseInt(color.substring(2, 4), 16),
-        b: parseInt(color.substring(4, 6), 16)
-      };
-    });
+    this.dirtColors = dirtTypes.map(dirt => hexToRgb(dirt.color));
   }
 
   // --------------------------------
   // Génération des salissures
   // --------------------------------
 
-  
-/**
- * Génère les salissures de la carte.
- *
- * Chaque type de salissure possède son propre
- * nombre de zones à générer.
- *
- * Les densités sont fournies par la configuration
- * de la carte actuellement chargée.
- *
- * La génération s'appuie sur un maillage grossier (un centre
- * possible toutes les 8 unités) : les zones sont ensuite
- * dessinées en douceur dans le tampon basse résolution, ce
- * qui donne des formes organiques tout en restant très rapide.
- */
-generate(
-  dirtDensity: Record<string, number>
-): void {
+  /**
+   * Génère les salissures de la carte.
+   *
+   * Chaque type de salissure possède son propre nombre de zones,
+   * fourni par la configuration de la carte actuellement chargée.
+   *
+   * La génération s'appuie sur un maillage grossier (un centre
+   * possible toutes les 8 unités) : les zones sont ensuite
+   * dessinées en douceur dans le tampon basse résolution, ce
+   * qui donne des formes organiques tout en restant très rapide.
+   */
+  generate(dirtDensity: Record<string, number>): void {
 
-  // Réinitialise toutes les couches.
-  for (const layer of this.layers) {
-    layer.fill(0);
+    // Réinitialise toutes les couches.
+    for (const layer of this.layers) {
+      layer.fill(0);
+    }
+
+    // Dessine les zones de chaque type de salissure autorisé.
+    for (let dirtIndex = 0; dirtIndex < this.dirtTypes.length; dirtIndex++) {
+      this.generateDirtLayer(dirtIndex, dirtDensity);
+    }
+
+    // Mélange indépendamment l'ordre des couches de chaque pixel.
+    this.generateLayerOrders();
+
+    // Calcule le multiplicateur de récompense moyen de la carte,
+    // pondéré par la densité de chaque salissure présente.
+    this.computeRewardMultiplier(dirtDensity);
+
+    // Mémorise la quantité initiale réelle pour la progression.
+    this.initialAmount = this.getRemainingAmount();
   }
 
-  const scale = DirtEngine.RENDER_SCALE;
-
-  // Maillage grossier utilisé pour choisir les centres de zones.
-  const gridStep = 8;
-
-  const cols = Math.ceil(this.width / gridStep);
-  const rows = Math.ceil(this.height / gridStep);
-
-  // Génère chaque type de salissure autorisé.
-  for (
-    let dirtIndex = 0;
-    dirtIndex < this.dirtTypes.length;
-    dirtIndex++
-  ) {
-
+  /**
+   * Dessine les zones d'une seule couche de salissure.
+   *
+   * Le nombre de zones provient de la densité configurée ; une
+   * valeur absente signifie que la salissure est désactivée.
+   */
+  private generateDirtLayer(
+    dirtIndex: number,
+    dirtDensity: Record<string, number>,
+  ): void {
     const dirt = this.dirtTypes[dirtIndex];
     const layer = this.layers[dirtIndex];
 
-    // Récupère le nombre de zones configuré pour cette salissure.
-    // Une valeur absente signifie que la salissure est désactivée.
-    const zoneCount = Math.max(
-      0,
-      Math.floor(dirtDensity[dirt.id] ?? 0)
-    );
+    const zoneCount = Math.max(0, Math.floor(dirtDensity[dirt.id] ?? 0));
+
+    const scale = DirtEngine.RENDER_SCALE;
+
+    // Maillage grossier utilisé pour choisir les centres de zones.
+    const gridStep = 8;
+
+    const cols = Math.ceil(this.width / gridStep);
+    const rows = Math.ceil(this.height / gridStep);
 
     // Génère les zones indépendantes.
     for (let i = 0; i < zoneCount; i++) {
 
       // Centre choisi sur le maillage grossier (en coordonnées carte).
-      const centerX =
-        Math.floor(Math.random() * cols) * gridStep + gridStep / 2;
-      const centerY =
-        Math.floor(Math.random() * rows) * gridStep + gridStep / 2;
+      const centerX = Math.floor(Math.random() * cols) * gridStep + gridStep / 2;
+      const centerY = Math.floor(Math.random() * rows) * gridStep + gridStep / 2;
 
       const radius = 8 + Math.random() * 35;
 
@@ -243,19 +274,12 @@ generate(
       const br = Math.max(1.5, radius * scale);
 
       const minX = Math.max(0, Math.floor(bcx - br));
-      const maxX = Math.min(
-        this.bufferWidth - 1,
-        Math.ceil(bcx + br)
-      );
+      const maxX = Math.min(this.bufferWidth - 1, Math.ceil(bcx + br));
 
       const minY = Math.max(0, Math.floor(bcy - br));
-      const maxY = Math.min(
-        this.bufferHeight - 1,
-        Math.ceil(bcy + br)
-      );
+      const maxY = Math.min(this.bufferHeight - 1, Math.ceil(bcy + br));
 
       for (let y = minY; y <= maxY; y++) {
-
         for (let x = minX; x <= maxX; x++) {
 
           const dx = x - bcx;
@@ -285,58 +309,45 @@ generate(
     }
   }
 
-  // Mélange indépendamment l'ordre des couches de chaque pixel.
-  this.generateLayerOrders();
+  /**
+   * Moyenne pondérée des multiplicateurs de récompense des
+   * salissures présentes sur la carte.
+   */
+  private computeRewardMultiplier(dirtDensity: Record<string, number>): void {
 
-  // Calcule le multiplicateur de récompense moyen de la carte,
-  // pondéré par la densité de chaque salissure présente.
-  this.computeRewardMultiplier(dirtDensity);
+    const totalDensity = Object.values(dirtDensity)
+      .reduce((sum, value) => sum + value, 0);
 
-  // Mémorise la quantité initiale réelle pour la progression.
-  this.initialAmount = this.getRemainingAmount();
-}
+    if (totalDensity <= 0) {
+      this.rewardMultiplier = 0;
+      return;
+    }
 
-/**
- * Moyenne pondérée des multiplicateurs de récompense des
- * salissures présentes sur la carte.
- */
-private computeRewardMultiplier(
-  dirtDensity: Record<string, number>
-): void {
+    let multiplier = 0;
 
-  const totalDensity = Object.values(dirtDensity)
-    .reduce((sum, value) => sum + value, 0);
+    for (const dirt of this.dirtTypes) {
 
-  if (totalDensity <= 0) {
-    this.rewardMultiplier = 0;
-    return;
+      const weight = dirtDensity[dirt.id];
+
+      if (weight === undefined) continue;
+
+      multiplier += dirt.rewardMultiplier * (weight / totalDensity);
+    }
+
+    this.rewardMultiplier = multiplier;
   }
 
-  let multiplier = 0;
-
-  for (const dirt of this.dirtTypes) {
-
-    const weight = dirtDensity[dirt.id];
-
-    if (weight === undefined) continue;
-
-    multiplier += dirt.rewardMultiplier * (weight / totalDensity);
+  /**
+   * Récompense gagnée par unité de salissure retirée.
+   *
+   * Le moteur centralise ici l'économie du jeu : le composant
+   * n'a plus qu'à multiplier la quantité retirée par cette
+   * valeur. Le résultat est volontairement modeste pour rester
+   * cohérent avec les prix de la boutique.
+   */
+  getRewardPerUnit(): number {
+    return this.rewardMultiplier / DirtEngine.DIRT_UNITS_PER_DOLLAR;
   }
-
-  this.rewardMultiplier = multiplier;
-}
-
-/**
- * Récompense gagnée par unité de salissure retirée.
- *
- * Le moteur centralise ici l'économie du jeu : le composant
- * n'a plus qu'à multiplier la quantité retirée par cette
- * valeur. Le résultat est volontairement modeste pour rester
- * cohérent avec les prix de la boutique.
- */
-getRewardPerUnit(): number {
-  return this.rewardMultiplier / DirtEngine.DIRT_UNITS_PER_DOLLAR;
-}
 
   // --------------------------------
   // Ordre des couches par pixel
@@ -584,41 +595,16 @@ getRewardPerUnit(): number {
     let remaining = 0;
 
     for (const layer of this.layers) {
-
-      // Additionne la couche en blocs de 32 octets : bien plus
-      // rapide qu'une boucle octet par octet sur de grandes cartes.
-      const length = layer.length;
-      const aligned = length - (length % 32);
-
-      let blockSum = 0;
-
-      for (let i = 0; i < aligned; i += 32) {
-        blockSum +=
-          layer[i] + layer[i + 1] + layer[i + 2] + layer[i + 3] +
-          layer[i + 4] + layer[i + 5] + layer[i + 6] + layer[i + 7] +
-          layer[i + 8] + layer[i + 9] + layer[i + 10] + layer[i + 11] +
-          layer[i + 12] + layer[i + 13] + layer[i + 14] + layer[i + 15] +
-          layer[i + 16] + layer[i + 17] + layer[i + 18] + layer[i + 19] +
-          layer[i + 20] + layer[i + 21] + layer[i + 22] + layer[i + 23] +
-          layer[i + 24] + layer[i + 25] + layer[i + 26] + layer[i + 27] +
-          layer[i + 28] + layer[i + 29] + layer[i + 30] + layer[i + 31];
-      }
-
-      for (let i = aligned; i < length; i++) {
-        blockSum += layer[i];
-      }
-
-      remaining += blockSum;
+      remaining += sumLayer(layer);
     }
 
     return remaining;
   }
 
-
   /**
- * Retourne la quantité de salissures présente
- * au moment de la dernière génération de carte.
- */
+   * Retourne la quantité de salissures présente
+   * au moment de la dernière génération de carte.
+   */
   getInitialAmount(): number {
     return this.initialAmount;
   }
@@ -655,6 +641,21 @@ getRewardPerUnit(): number {
    */
   isComplete(): boolean {
     return this.getProgress() >= COMPLETION_THRESHOLD;
+  }
+
+  /**
+   * Récompense en $ accordée quand la carte est validée.
+   *
+   * Elle est plafonnée par la taille réelle de la carte :
+   * environ 1 $ pour DIRT_UNITS_PER_DOLLAR unités de salissure
+   * présentes au départ, avec un minimum garanti pour que les
+   * petites cartes restent intéressantes (cohérent avec des
+   * améliorations à partir de 100 $).
+   */
+  computeMapReward(): number {
+    const proportionalReward = this.initialAmount / DirtEngine.DIRT_UNITS_PER_DOLLAR;
+
+    return Math.max(DirtEngine.MINIMUM_MAP_REWARD, Math.round(proportionalReward));
   }
 
   // --------------------------------
